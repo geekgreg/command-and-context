@@ -27,6 +27,9 @@ runs a simulated world that shows every visual; use it for testing, and for anyt
 - npm: published as `command-and-context` (`npx command-and-context`). `bin/command-and-context.js` opens the
   window by default; `node server/index.js` never does. To release: bump `version` in `package.json`, commit,
   check `npm pack --dry-run`, then Greg runs `npm publish` (his npm login and 2FA).
+- Web demo: https://geekgreg.github.io/command-and-context/ (GitHub Pages), rebuilt by `.github/workflows/pages.yml`
+  on every push to `main` via `tools/build-site.mjs`. The page is marked `<html data-site="static">`: it always runs
+  the demo and `D D` / the DEMO badge point to the install instead. Keep `public/index.html` paths relative.
 
 ## Next tasks
 

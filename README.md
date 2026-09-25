@@ -3,6 +3,9 @@
 *Localhost Theatre of Operations.* A low-poly, isometric RTS diorama of every Claude Code session running on
 this machine, plus their sub-agents, processes and dev-server ports. It's made for a spare monitor.
 
+**[▶ Try the web demo](https://geekgreg.github.io/command-and-context/)** (a simulated world, right in your browser) ·
+`npx command-and-context` to watch your own sessions.
+
 ![The archipelago](docs/screenshots/hero.png)
 
 Repos are islands. Sessions are bases. Sub-agents are workers who walk out of the base, do their jobs, and go
@@ -286,6 +289,8 @@ any file passed with `--config`. For example `{ "hideAfterHours": 1, "ignorePort
 - `public/dev/*.html`: standalone harness pages for islands, buildings, units and the harbor.
 - `docs/DESIGN.md`: the full design spec and data contract.
 - `tools/shot.ps1`: headless screenshot helper.
+- `tools/build-site.mjs`: builds the web demo; `.github/workflows/pages.yml` publishes it to GitHub Pages on
+  every push to `main`.
 
 ## License
 
