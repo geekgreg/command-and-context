@@ -20,9 +20,12 @@ const SSE_FAILS = 3;           // consecutive stream errors before falling back 
 const POLL_MS = 2000;
 const PROBE_MAX = 60_000;      // while polling, retry SSE after 0 s, then 15 s, 30 s, 60 s ... (reset once it works)
 
+// The hosted web demo (tools/build-site.mjs marks its page <html data-site="static">) has no server behind it: always demo.
+export const STATIC_SITE = globalThis.document?.documentElement?.dataset?.site === 'static';
+
 export function createFeed({ onSnapshot, onStatus, demo, speed, scene } = {}) {
   const params = new URLSearchParams(globalThis.location?.search || '');
-  const wantDemo = demo ?? (params.has('demo') && !/^(0|false|off|no)$/i.test(params.get('demo')));
+  const wantDemo = STATIC_SITE || (demo ?? (params.has('demo') && !/^(0|false|off|no)$/i.test(params.get('demo'))));
   let status = null, inner = null, stopped = false;
 
   const setStatus = (s) => {

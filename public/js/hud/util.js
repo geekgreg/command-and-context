@@ -5,6 +5,10 @@ import { esc, trunc, stateChip, ctxColor, STATE_TEXT } from '../world/labels.js'
 
 export { fmtTokens, fmtAgo, factionPal, cssHex, PAL, clamp, esc, trunc, stateChip, ctxColor, STATE_TEXT };
 
+// The hosted web demo (tools/build-site.mjs marks its page <html data-site="static">): no live world to switch to.
+export const STATIC_SITE = globalThis.document?.documentElement?.dataset?.site === 'static';
+export const PROJECT_URL = 'https://github.com/geekgreg/command-and-context';
+
 // ---- DOM ------------------------------------------------------------------------------------------------------
 
 // el('div.a.b', { attrs }, children...) -> HTMLElement. Children may be strings (text) or nodes.

@@ -11,7 +11,7 @@
 //   tiptest                                    (with select=) show that target's hover tooltip mid-screen
 // With `shot` present the select= camera move is instant (headless SwiftShader runs the engine clock slowly).
 import * as THREE from 'three';
-import { el, esc, trunc, prefs, clamp, indexSnapshot, doingText, roleName, funit, fhq, vesselName, portText, islandTitle, fmtPct, fmtAgo, RUNNING } from './util.js';
+import { STATIC_SITE, PROJECT_URL, el, esc, trunc, prefs, clamp, indexSnapshot, doingText, roleName, funit, fhq, vesselName, portText, islandTitle, fmtPct, fmtAgo, RUNNING } from './util.js';
 import { TopBar } from './topbar.js';
 import { Minimap } from './minimap.js';
 import { SelectionCard } from './card.js';
@@ -437,6 +437,7 @@ export class Hud {
 
   // D reloads into the other world, so it takes a second press within DEMO_ARM_MS: a stray key never does it.
   armDemo() {
+    if (STATIC_SITE) { this.getIt(); return; }
     const now = performance.now();
     if (this.demoArmedAt && now - this.demoArmedAt < DEMO_ARM_MS) { this.demoArmedAt = 0; this.toggleDemo(); return; }
     this.demoArmedAt = now;
@@ -469,7 +470,14 @@ export class Hud {
     this.toast.show(`Labels: <b>${esc(next)}</b>`);
   }
 
+  // The web demo has no live world: point at the real thing instead.
+  getIt(open = false) {
+    this.toast.show('This is the web demo. Run <b>npx command-and-context</b> to watch your own Claude Code sessions.', 4);
+    if (open) window.open(PROJECT_URL, '_blank', 'noopener');
+  }
+
   toggleDemo() {
+    if (STATIC_SITE) { this.getIt(true); return; }
     const q = new URLSearchParams(location.search);
     const on = q.has('demo');
     if (on) { q.delete('demo'); q.delete('scene'); q.delete('speed'); } else q.set('demo', '');

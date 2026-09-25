@@ -62,7 +62,8 @@ function startPolling() {
 
 // Headless screenshots (?shot): a never-ending SSE stream stalls Chrome's virtual-time budget, so poll instead.
 const params = new URLSearchParams(location.search);
-if (params.has('shot') && !params.has('demo')) {
+const staticSite = document.documentElement.dataset.site === 'static';   // the hosted web demo: no server to poll
+if (params.has('shot') && !params.has('demo') && !staticSite) {
   startPolling();
   window.cnc.feed = feed;
 } else {
@@ -86,4 +87,4 @@ import('./hud/hud.js')
   })
   .catch((e) => report('./hud/hud.js', e));
 
-setTimeout(() => { if (first) splash.status('Still waiting for the collector… is `npm start` running?'); }, 12000);
+setTimeout(() => { if (first && !staticSite) splash.status('Still waiting for the collector… is `npm start` running?'); }, 12000);

@@ -1,5 +1,5 @@
 // Top bar: game logo, resource counters, the NEEDS YOU pill, clock, connection light and the chrome buttons.
-import { el, setText, fmtTokens, fmtUsd, fmtClock, fmtPct, plural, RUNNING, esc, trunc } from './util.js';
+import { STATIC_SITE, el, setText, fmtTokens, fmtUsd, fmtClock, fmtPct, plural, RUNNING, esc, trunc } from './util.js';
 import { ICON, weatherIcon, EV_ICON } from './icons.js';
 
 const LOGO_TEXT = 'COMMAND & CONTEXT';
@@ -44,7 +44,7 @@ const EMBLEM = `<svg class="emblem" viewBox="0 0 48 52" aria-hidden="true">
 const CONN = {
   live: ['LIVE', 'Live feed from the collector'],
   stale: ['LIVE', 'No update from the collector for a while: checking the line…'],
-  demo: ['DEMO', 'Simulated world (press D twice for live)'],
+  demo: ['DEMO', STATIC_SITE ? 'Simulated world: the web demo' : 'Simulated world (press D twice for live)'],
   reconnecting: ['RECONNECTING', 'Lost the collector, retrying…'],
   connecting: ['CONNECTING', 'Looking for the collector…'],
 };
@@ -62,7 +62,9 @@ export class TopBar {
 
     this.logo = el('button.logo', { type: 'button', 'data-tip': 'Field manual: what am I looking at?', html: EMBLEM + `<span class="logo-t">${logoSvg()}<span class="logo-sub">Localhost theatre of operations</span></span>` });
     this.logo.addEventListener('click', () => hud.panels.toggleSettings('manual'));
-    this.demo = el('button.demo-badge', { type: 'button', hidden: true, 'data-tip': 'Demo world. Click, or press D twice, to switch to your live sessions.' });
+    this.demo = el('button.demo-badge', { type: 'button', hidden: true, 'data-tip': STATIC_SITE
+      ? 'Web demo: a simulated world. Click to get Command & Context for your own Claude Code sessions (npx command-and-context).'
+      : 'Demo world. Click, or press D twice, to switch to your live sessions.' });
     this.demo.addEventListener('click', () => hud.toggleDemo());
 
     this.cpuIcon = null;
@@ -160,7 +162,7 @@ export class TopBar {
     const d = snap.demo;
     this.demo.hidden = !d;
     if (d) {
-      const t = `DEMO${d.scene ? ' · ' + d.scene : ''}${d.speed && d.speed !== 1 ? ' ×' + d.speed : ''}`;
+      const t = STATIC_SITE ? 'DEMO · GET IT ↗' : `DEMO${d.scene ? ' · ' + d.scene : ''}${d.speed && d.speed !== 1 ? ' ×' + d.speed : ''}`;
       setText(this.demo, t);
     }
 
