@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "command-and-context",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/index.js", "--port", "7420"],
+      "port": 7420
+    }
+  ]
+}

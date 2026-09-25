@@ -1,0 +1,48 @@
+{
+  "name": "command-and-context",
+  "version": "1.0.0",
+  "description": "A low-poly isometric RTS diorama of every Claude Code session, sub-agent, and dev server running on this machine.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "dashboard",
+    "monitor",
+    "threejs",
+    "rts",
+    "visualization",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/geekgreg/command-and-context#readme",
+  "bugs": {
+    "url": "https://github.com/geekgreg/command-and-context/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/geekgreg/command-and-context.git"
+  },
+  "license": "MIT",
+  "author": "geekgreg (https://github.com/geekgreg)",
+  "type": "module",
+  "bin": {
+    "command-and-context": "bin/command-and-context.js"
+  },
+  "files": [
+    "bin/",
+    "server/",
+    "public/index.html",
+    "public/css/",
+    "public/js/"
+  ],
+  "scripts": {
+    "start": "node server/index.js",
+    "open": "node server/index.js --open",
+    "demo": "node server/index.js --open --demo",
+    "probe": "node server/index.js --dump"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "three": "^0.186.0"
+  }
+}

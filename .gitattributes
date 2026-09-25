@@ -1,0 +1,2 @@
+# The npx entry point must keep LF endings: a CRLF shebang line breaks it on macOS and Linux.
+bin/** text eol=lf

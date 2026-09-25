@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Harbor app frame</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1630; }
+  iframe { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+  #diag { position: fixed; left: 8px; bottom: 8px; z-index: 9; background: #000d; color: #0f0; font: 11px monospace; padding: 6px;
+          margin: 0; max-width: 900px; white-space: pre-wrap; display: none; }
+</style>
+</head>
+<body>
+<iframe id="app" title="Command & Context"></iframe>
+<pre id="diag"></pre>
+<script type="module">
+// Dev helper (harbor agent): runs the real app (/) in a frame, then frames one vessel.
+//   passes through: demo scene speed shot labels daynight weather quality
+//   ?fv=<port id | kind | index> vessel to frame   ?fz=3 zoom   ?faz=1 quarter turns   ?fy=0.8 lift   ?fwait=ms settle time
+//   ?fdo=depart|toot|refuel (after ?fdelay=ms)   ?fisl=<island name> frame an island instead   ?fdiag vessel dump
+const q = new URLSearchParams(location.search);
+const pass = [];
+for (const k of ['demo', 'scene', 'speed', 'shot', 'labels', 'daynight', 'weather', 'quality']) {
+  if (q.has(k)) pass.push(q.get(k) ? `${k}=${encodeURIComponent(q.get(k))}` : k);
+}
+const frame = document.getElementById('app');
+frame.src = '/' + (pass.length ? '?' + pass.join('&') : '');
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+let app = null;
+for (let i = 0; i < 300; i++) {
+  app = frame.contentWindow?.cnc;
+  if (app?.world?.vessels?.size) break;
+  await wait(100);
+}
+await wait(parseFloat(q.get('fwait') || '400'));
+const W = app?.world, E = app?.engine;
+if (W && E) {
+  for (let i = 0; i < parseInt(q.get('faz') || '0', 10); i++) E.view.rotate?.(1, { secs: 0 });
+  const fy = parseFloat(q.get('fy') || '0.8'), fz = parseFloat(q.get('fz') || '3');
+  let target = null;
+  if (q.has('fisl')) {
+    const isl = [...W.islands.values()].find((x) => x.data?.name === q.get('fisl')) || [...W.islands.values()][0];
+    target = isl?.group;
+  } else {
+    const list = [...W.vessels.values()];
+    const want = q.get('fv') || '0';
+    target = W.vessels.get(want) || list.find((x) => x.kind === want || x.port?.kind === want) || list[parseInt(want, 10) || 0];
+    if (target?.group && q.has('fdo')) {
+      const v = target;
+      setTimeout(() => {
+        const d = q.get('fdo');
+        if (d === 'depart') v.depart?.(); else if (d === 'toot') v.toot?.(null, true); else if (d === 'refuel') v.refuel?.();
+      }, parseFloat(q.get('fdelay') || '300'));
+    }
+    target = target?.group;
+  }
+  if (target) {
+    const p = target.position;
+    E.view.focus({ x: p.x, y: fy, z: p.z }, { zoom: fz, secs: 0 });
+  }
+  if (q.has('drive')) {
+    // Headless Edge barely runs the app's rAF loop, so step the real world ourselves: ?drive=<engine secs per sec>
+    const doc = frame.contentDocument, sc = doc.createElement('script');
+    sc.type = 'module';
+    sc.textContent = "import { tickTweens } from '/js/world/kit.js'; window.__tickTweens = tickTweens;";
+    doc.body.appendChild(sc);
+    await wait(300);
+    const tt = frame.contentWindow.__tickTweens || (() => {}), step = 1 / 30, n = Math.max(1, Math.round(2 * (Number(q.get('drive')) || 1)));
+    setInterval(() => {
+      for (let k = 0; k < n; k++) {
+        E.time += step;
+        tt(step);
+        try { W.tick(step, E.time); } catch (e) { console.error(e); }
+        E.fx?.tick?.(step);
+      }
+    }, 66);
+  }
+  if (q.has('track')) {
+    // fishing-trip tracking over the run: modes seen, trips/catches, max distance from the berth, min clearance to
+    // island / harbour discs (hard radius) while under way; dumped into <pre id="track"> for tools\dom.ps1
+    const pre = document.createElement('pre');
+    pre.id = 'track';
+    pre.style.display = 'none';
+    document.body.appendChild(pre);
+    const t0 = E.time, w0 = performance.now(), per = new Map();
+    let minClear = Infinity, minAt = '';
+    const sample = () => {
+      const discs = [];
+      W.layout?.forEach?.((o) => discs.push({ x: o.x, z: o.z, r: o.r || 7, id: 'isl' }));
+      discs.push({ x: 0, z: 0, r: 8.5, id: 'town' });
+      for (const v of W.vessels.values()) {
+        if (!Number.isFinite(v.wx)) continue;
+        let r = per.get(v.id);
+        if (!r) per.set(v.id, (r = { kind: v.kind, modes: new Set(), maxOut: 0, trips: 0, catches: 0, log: [], last: null }));
+        r.modes.add(v.mode);
+        if (v.mode !== r.last) { r.log.push(`${(E.time - t0).toFixed(1)}:${v.mode}`); r.last = v.mode; }
+        r.trips = v.trips; r.catches = v.catches;
+        r.maxOut = Math.max(r.maxOut, Math.hypot(v.wx - v.group.position.x, v.wz - v.group.position.z));
+        if (v.mode === 'out' || v.mode === 'return') {
+          for (const d of discs) {
+            const c = Math.hypot(v.wx - d.x, v.wz - d.z) - d.r;
+            if (c < minClear) { minClear = c; minAt = `${v.id} ${v.mode} vs ${d.id}`; }
+          }
+        }
+      }
+      pre.textContent = JSON.stringify({
+        engineSecs: +(E.time - t0).toFixed(1), wallSecs: +((performance.now() - w0) / 1000).toFixed(1), minClear: +minClear.toFixed(2), minAt,
+        vessels: [...per.entries()].map(([id, r]) => ({ id, kind: r.kind, trips: r.trips, catches: r.catches, maxOut: +r.maxOut.toFixed(1), modes: [...r.modes].join(','), log: r.log.join(' ') })),
+      });
+    };
+    setInterval(sample, 250);
+  }
+  if (q.has('fdiag')) {
+    const pre = document.getElementById('diag');
+    pre.style.display = 'block';
+    const dump = () => {
+      pre.textContent = [...W.vessels.values()].map((v) => `${v.id} ${v.kind} mode=${v.mode} act=${(v.act ?? 0).toFixed(2)} ` +
+        `wear=${(v.wear ?? 0).toFixed(2)} moor=${v.quay ? 'quay' : v.pier ? 'pier' : 'pontoon'} dock=${v.dock?.kind}/${v.dock?.bi}/${v.dock?.berth && v.dock?.pierEnd ? [v.dock.berth.x - v.dock.pierEnd.x, v.dock.berth.z - v.dock.pierEnd.z].map((n) => n.toFixed(2)) : '-'}` +
+        (v.containers ? ` boxes=${JSON.stringify(v.port?.ports)}` : '')).join('\n');
+    };
+    dump();
+    setInterval(dump, 1000);
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Command &amp; Context</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 3 55 21 32 61 9 21Z' fill='%2339e5ff'/%3E%3Cpath d='M32 3 55 21 32 29 9 21Z' fill='%23c9faff'/%3E%3Cpath d='M32 29 55 21 32 61Z' fill='%231fa6c9'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Lilita+One&display=swap">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/hud.css">
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+  </script>
+  <script>
+    // Uncaught-error overlay: uncaught errors, unhandled rejections and console.error calls are listed in a red
+    // box (deduplicated, x-count). Kept on purpose: it is how headless screenshots surface runtime errors.
+    (() => {
+      const seen = new Map(), pending = [];
+      let box = null, list = null;
+      const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const loc = (file, line, col) => (file ? String(file).split('/').pop().split('?')[0] + (line ? ':' + line + (col ? ':' + col : '') : '') : '');
+      const frame = (stack) => {
+        for (const l of String(stack || '').split('\n').slice(1)) {
+          const m = l.match(/\(?((?:https?|file):\/\/[^\s)]+):(\d+):(\d+)\)?/);
+          if (m) return loc(m[1], m[2], m[3]);
+        }
+        return '';
+      };
+      const fmt = (a) => {
+        if (a instanceof Error) return a.message || String(a);
+        if (a && typeof a === 'object') { try { return JSON.stringify(a).slice(0, 200); } catch { return String(a); } }
+        return String(a);
+      };
+      function ensure() {
+        if (box) return true;
+        if (!document.body) return false;
+        box = document.createElement('div');
+        box.id = 'errors';
+        box.innerHTML = '<div class="err-head"><b>Errors</b><button type="button" title="Dismiss">×</button></div><ol></ol>';
+        list = box.querySelector('ol');
+        box.querySelector('button').onclick = () => { box.remove(); box = null; seen.clear(); };
+        document.body.appendChild(box);
+        return true;
+      }
+      function show(msg, where) {
+        msg = String(msg || 'Unknown error').slice(0, 700);
+        const key = msg + '|' + (where || '');
+        const hit = seen.get(key);
+        if (hit) { hit.n++; hit.el.querySelector('.n').textContent = '×' + hit.n; return; }
+        if (!ensure()) { pending.push([msg, where]); return; }
+        if (seen.size >= 14) return;
+        const li = document.createElement('li');
+        li.innerHTML = '<span class="m">' + esc(msg) + '</span>' + (where ? ' <span class="w">' + esc(where) + '</span>' : '') + ' <span class="n"></span>';
+        list.appendChild(li);
+        seen.set(key, { n: 1, el: li });
+      }
+      document.addEventListener('DOMContentLoaded', () => { for (const [m, w] of pending.splice(0)) show(m, w); });
+      addEventListener('error', (e) => {
+        if (e instanceof ErrorEvent) show(e.message || fmt(e.error), loc(e.filename, e.lineno, e.colno) || frame(e.error && e.error.stack));
+        else if (e.target && e.target.tagName === 'SCRIPT') {
+          show('Failed to load script', e.target.src);
+          if (window.__splash) window.__splash.fail('Could not load ' + String(e.target.src).split('/').pop() + ' — check the server console.');
+        }
+      }, true);
+      addEventListener('unhandledrejection', (e) => {
+        const r = e.reason;
+        show('Unhandled rejection: ' + fmt(r), r && r.stack ? frame(r.stack) : '');
+      });
+      const original = console.error.bind(console);
+      console.error = (...args) => {
+        original(...args);
+        try {
+          const err = args.find((a) => a instanceof Error);
+          show(args.map(fmt).join(' '), err ? frame(err.stack) : '');
+        } catch { /* never let the overlay throw */ }
+      };
+      window.__cncError = show;
+    })();
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="labels"></div>
+  <div id="hud"></div>
+
+  <div id="splash">
+    <div class="splash-inner">
+      <svg class="splash-mark" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M32 3 55 21 32 61 9 21Z" fill="#39e5ff"/>
+        <path d="M32 3 55 21 32 29 9 21Z" fill="#c9faff"/>
+        <path d="M32 29 55 21 32 61Z" fill="#1fa6c9"/>
+      </svg>
+      <div class="splash-logo">COMMAND <span>&amp;</span> CONTEXT</div>
+      <div class="splash-sub">Local Claude Code Theatre of Operations</div>
+      <div class="splash-bar"><i></i></div>
+      <div class="splash-line in" id="splash-line">Reticulating splines…</div>
+      <div class="splash-status" id="splash-status">Connecting to the collector</div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const lines = [
+        'Reticulating splines…', 'Warming up the token crystals…', 'Teaching the Magisters to waddle…',
+        'Inflating the tugboats…', 'Negotiating with the sea serpent…', 'Polishing the context silos…',
+        'Counting sub-agents (again)…', 'Convincing the lighthouse to blink…', 'Herding Haiku Sprites…',
+        'Sharpening the Fable Guild’s quills…', 'Pressure-testing the compaction press…',
+        'Bribing the harbormaster…', 'Stacking shipping containers neatly…', 'Rehearsing “Construction complete.”…',
+      ];
+      const el = document.getElementById('splash-line');
+      const statusEl = document.getElementById('splash-status');
+      let i = 0;
+      const timer = setInterval(() => {
+        i = (i + 1) % lines.length;
+        el.classList.remove('in');
+        void el.offsetWidth;
+        el.textContent = lines[i];
+        el.classList.add('in');
+      }, 1700);
+      window.__splash = {
+        status(text) { if (statusEl) statusEl.textContent = text; },
+        hide() {
+          clearInterval(timer);
+          const s = document.getElementById('splash');
+          if (!s || s.classList.contains('out')) return;
+          s.classList.add('out');
+          setTimeout(() => s.remove(), 800);
+        },
+        fail(text) {
+          clearInterval(timer);
+          const s = document.getElementById('splash');
+          if (s) s.classList.add('failed');
+          el.textContent = text;
+        },
+      };
+    })();
+  </script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

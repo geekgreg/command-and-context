@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buildings harness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Lilita+One&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #7cc6e6; font-family: "Chakra Petch", system-ui, sans-serif; }
+  canvas { display: block; }
+  #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  #labels .lbl { position: absolute; left: 0; top: 0; will-change: transform; }
+  /* Minimal stand-ins for base.css fx styles (the engine agent owns the real ones). */
+  .fx-text span { display: block; font: calc(24px * var(--fs, 1)) "Lilita One", "Arial Black", sans-serif; color: var(--c, #fff);
+    -webkit-text-stroke: 5px #1b1f33; paint-order: stroke fill; text-shadow: 0 3px 0 rgba(0,0,0,.35); white-space: nowrap; }
+  .fx-zzz { font: 22px "Lilita One", "Arial Black", sans-serif; color: #eef1ff; -webkit-text-stroke: 4px #1b2350; paint-order: stroke fill; }
+  .fx-zzz b { display: inline-block; animation: zz 2.4s ease-in-out infinite; }
+  .fx-zzz b:nth-child(2) { font-size: .8em; animation-delay: .4s; } .fx-zzz b:nth-child(3) { font-size: .62em; animation-delay: .8s; }
+  @keyframes zz { 0% { transform: translate(0, 6px); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(10px, -22px); opacity: 0; } }
+  .mode-off .lbl:not(.always) { display: none; }
+  #hud { position: fixed; left: 8px; top: 8px; color: #fff; font: 600 13px "Chakra Petch", sans-serif; background: #0e1630c0; padding: 4px 8px; border-radius: 6px; pointer-events: none; }
+  #ui { position: fixed; left: 8px; bottom: 8px; display: flex; gap: 6px; flex-wrap: wrap; max-width: 70vw; }
+  #ui button { font: 600 12px "Chakra Petch", sans-serif; background: #0e1630e0; color: #fff; border: 2px solid #ffc53d; border-radius: 8px; padding: 4px 8px; cursor: pointer; }
+  #ui button:hover { background: #22305e; }
+  .shot #ui, .shot #hud { display: none; }
+  #err { position: fixed; right: 8px; top: 8px; max-width: 50vw; max-height: 60vh; overflow: auto; color: #fff; background: #b00020e8; font: 12px monospace; white-space: pre-wrap; padding: 6px; display: none; z-index: 99; }
+</style>
+<script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+</head>
+<body>
+<div id="labels"></div>
+<div id="hud"></div>
+<div id="ui"></div>
+<pre id="err"></pre>
+<script>
+  const errBox = (t) => { const el = document.getElementById('err'); el.style.display = 'block'; el.textContent += t + '\n'; };
+  addEventListener('error', (e) => errBox(String(e.message || e) + '\n' + (e.error && e.error.stack || '')));
+  addEventListener('unhandledrejection', (e) => errBox('rejection: ' + (e.reason && e.reason.stack || e.reason)));
+  const _ce = console.error; console.error = (...a) => { errBox(a.map((x) => (x && x.stack) || String(x)).join(' ')); _ce(...a); };
+</script>
+<script type="module">
+// Buildings harness: all five faction HQs side by side on a strip of island, a stub engine that wraps the
+// engine agent's real Fx + Labels, and URL params / buttons that fire every one-shot animation.
+//
+//   ?states=working,thinking,needs_input,waiting,asleep   states per building (opus,sonnet,haiku,fable,merc)
+//   ?cats=edit,bash,read,web,mcp     current tool category per building (animates that module)
+//   ?mods=0..3                       force all module levels     ?ctx=0.9    force context fill
+//   ?only=i  ?focus=i  ?zoom=z  ?az=deg  ?size=s  ?facing=deg   framing
+//   ?day=0..1                        daylight (0 = night)        ?nofx  ?nolabels   test fallbacks
+//   ?new                             construct from scaffolding (not instant)
+//   ?compact=T ?clear=T ?end=T ?unlock=T ?ramp=T ?addproc=T ?killproc=T ?vet=T ?state=T:name   timed triggers
+//   ?at=T                            deterministic: simulate T seconds at 30 fps, render once, stop (for screenshots)
+//   ?shot                            hide harness UI
+import * as THREE from 'three';
+import { PAL, tickTweens } from '/js/world/kit.js';
+import { Building } from '/js/world/buildings.js';
+
+const q = new URLSearchParams(location.search);
+const num = (k, d) => (q.has(k) && q.get(k) !== '' ? parseFloat(q.get(k)) : d);
+if (q.has('shot')) document.body.classList.add('shot');
+
+// ---- renderer / scene -------------------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: q.has('at') });
+renderer.setPixelRatio(Math.min(1.5, devicePixelRatio || 1));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const root = new THREE.Group();
+root.name = 'root';
+scene.add(root);
+
+const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, -300, 400);
+const view = { target: new THREE.Vector3(0, 1.4, 0), zoom: num('zoom', 1), az: (num('az', 45) * Math.PI) / 180, size: num('size', 9.5) };
+function placeCamera() {
+  const aspect = innerWidth / innerHeight, h = view.size;
+  cam.left = -h * aspect; cam.right = h * aspect; cam.top = h; cam.bottom = -h;
+  cam.zoom = view.zoom;
+  const el = (35 * Math.PI) / 180, d = 120;
+  cam.position.set(view.target.x + d * Math.cos(el) * Math.sin(view.az), view.target.y + d * Math.sin(el), view.target.z + d * Math.cos(el) * Math.cos(view.az));
+  cam.lookAt(view.target);
+  cam.updateProjectionMatrix();
+}
+
+let daylight = num('day', 1);
+const hemi = new THREE.HemisphereLight(0xd6ecff, 0xf2d6a8, 1.5);
+const sun = new THREE.DirectionalLight(0xfff0d8, 2.4);
+sun.position.set(16, 30, 22);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 120 });
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.03;
+scene.add(hemi, sun, sun.target);
+function applyDaylight() {
+  const n = 1 - daylight;
+  scene.background = new THREE.Color(0x8fd3ee).lerp(new THREE.Color(0x1a1f4a), n);
+  hemi.intensity = 1.5 - 1.05 * n;
+  hemi.color.set(0xd6ecff).lerp(new THREE.Color(0x6b74c9), n);
+  sun.intensity = 2.4 - 2.0 * n;
+  sun.color.set(0xfff0d8).lerp(new THREE.Color(0x9aa8ff), n);
+  sea.material.color.set(PAL.sea).lerp(new THREE.Color(0x14204f), n);
+  engine.daylight = daylight;
+}
+
+// Island strip aligned with the screen so the five lots sit in a row.
+const rowDir = new THREE.Vector3(Math.cos(view.az), 0, -Math.sin(view.az));
+const grass = new THREE.MeshLambertMaterial({ color: PAL.grass, flatShading: true });
+const cliff = new THREE.MeshLambertMaterial({ color: PAL.cliff, flatShading: true });
+const island = new THREE.Mesh(new THREE.BoxGeometry(40, 2.2, 13), [cliff, cliff, grass, cliff, cliff, cliff]);
+island.position.y = -1.1;
+island.rotation.y = Math.atan2(-rowDir.z, rowDir.x);
+island.receiveShadow = true;
+scene.add(island);
+const sand = new THREE.Mesh(new THREE.BoxGeometry(42, 0.6, 15), new THREE.MeshLambertMaterial({ color: PAL.sand, flatShading: true }));
+sand.position.y = -1.9; sand.rotation.y = island.rotation.y; scene.add(sand);
+const sea = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshLambertMaterial({ color: PAL.sea }));
+sea.rotation.x = -Math.PI / 2; sea.position.y = -2.0; scene.add(sea);
+
+// ---- stub engine / world ---------------------------------------------------------------------------------
+const frameFns = new Set();
+const settings = { labels: q.has('nolabels') ? 'off' : 'all', quality: 'high', reduceMotion: q.has('rm'), daynight: 'auto', director: false, on() {}, set(k, v) { this[k] = v; } };
+const engine = {
+  THREE, renderer, scene, camera: cam, root, time: 0, daylight, settings,
+  serverNow: () => Date.now(), onFrame(fn) { frameFns.add(fn); return () => frameFns.delete(fn); },
+  bus: { on() {}, emit(ev, p) { log(`bus ${ev} ${p?.key ?? ''}`); } }, pick: { add() {}, remove() {} },
+  view: { focus() {}, fit() {} },
+};
+const labelsRoot = document.getElementById('labels');
+try { const { Labels } = await import('/js/world/labels.js'); engine.labels = new Labels(engine, labelsRoot); } catch (e) { console.warn('labels.js unavailable', e); }
+if (!q.has('nofx')) { try { const { Fx } = await import('/js/world/fx.js'); engine.fx = new Fx(engine); } catch (e) { console.warn('fx.js unavailable', e); } }
+if (q.has('nolabels')) engine.labels = null;
+const world = { engine, buildings: new Map(), snapshot: { settings: { asleepAfterMin: 20 } } };
+applyDaylight();
+
+// ---- sessions -----------------------------------------------------------------------------------------
+const FACTIONS = ['opus', 'sonnet', 'haiku', 'fable', 'merc'];
+const MODELS = { opus: 'Opus 5.5', sonnet: 'Sonnet 5', haiku: 'Haiku 5', fable: 'Fable 5.1', merc: 'GPT-ish 9' };
+const NAMES = ['Local session dashboard diorama', 'Wiring review: invoice export', 'Tiny poems for the release notes', 'Once upon a stack trace in checkout', 'Rented GPU cluster babysitting'];
+const STATES = (q.get('states') || 'working,thinking,needs_input,waiting,asleep').split(',');
+const CATS = (q.get('cats') || 'edit,bash,read,web,mcp').split(',');
+const CTX = [0.32, 0.55, 0.72, 0.86, 0.12];
+const TOOLSETS = [
+  { edit: 120, bash: 40, read: 20, search: 12, web: 3, agent: 9, mcp: 0 },
+  { edit: 30, bash: 110, read: 6, search: 2, web: 0, agent: 0, mcp: 5 },
+  { edit: 8, bash: 4, read: 30, search: 10, web: 26, agent: 3, mcp: 0 },
+  { edit: 26, bash: 12, read: 2, search: 1, web: 0, agent: 30, mcp: 101 },
+  { edit: 3, bash: 3, read: 0, search: 0, web: 0, agent: 0, mcp: 0 },
+];
+const now = Date.now();
+function makeSession(i) {
+  const f = FACTIONS[i];
+  const state = STATES[i] || 'idle';
+  const lvl = q.has('mods') ? parseInt(q.get('mods'), 10) : null;
+  const n = lvl == null ? null : [0, 3, 25, 100][lvl] ?? 0;
+  const tools = n == null ? { ...TOOLSETS[i] } : { edit: n, bash: n, read: n, search: 0, web: n, agent: n, mcp: n };
+  const ctx = num('ctx', CTX[i]);
+  return {
+    key: `key-${f}`, sessionId: `sid-${f}-1`, pid: 1000 + i, name: NAMES[i], faction: f, model: `claude-${f}`, modelLabel: MODELS[f],
+    state, stateSince: now, tool: ['working', 'waiting', 'needs_input'].includes(state) ? { name: 'Tool', cat: CATS[i] || 'edit', detail: 'doing things', since: now } : null,
+    lastTool: null, lastActivity: now - (state === 'asleep' ? 3 * 3.6e6 : 5000), startedAt: now - 3.6e6, endedAt: 0, branch: 'main',
+    context: { used: Math.round(ctx * 1e6), max: 1e6 }, compactions: num('comps', [2, 0, 5, 14, 1][i]), lastCompaction: null, clears: 0,
+    tools: { ...tools, plan: 0, skill: 0, other: 0 }, toolTotal: 100, cost: null, agentsDone: num('vetn', [0, 3, 7, 1, 5][i]), agents: [],
+    procs: Array.from({ length: num('procs', [1, 3, 2, 0, 10][i]) }, (_, k) => ({ pid: 5000 + i * 100 + k, name: 'node', cmd: 'node dev', cpu: [0.05, 0.4, 1.2][k % 3], since: now })),
+    ports: [],
+  };
+}
+
+const only = q.has('only') ? parseInt(q.get('only'), 10) : null;
+const spacing = num('spacing', 6.6);
+const entries = [];
+function lotPos(slot) { return rowDir.clone().multiplyScalar((slot - 2) * spacing); }
+FACTIONS.forEach((f, i) => {
+  if (only != null && only !== i) return;
+  const s = makeSession(i);
+  const lot = { position: lotPos(only != null ? 2 : i), facing: (num('facing', 0) * Math.PI) / 180, size: 5, annex: null };
+  const b = new Building(world, s, lot, null, { instant: !q.has('new') });
+  root.add(b.group);
+  world.buildings.set(s.key, b);
+  entries.push({ b, s, i });
+});
+if (q.has('focus')) {
+  const fi = parseInt(q.get('focus'), 10);
+  const e = entries.find((x) => x.i === fi) || entries[0];
+  view.target.copy(e.b.group.position).add(new THREE.Vector3(0, num('ty', 2.2), 0)).addScaledVector(rowDir, num('ox', 0));
+  view.target.z += num('oz', 0);
+  if (!q.has('zoom')) view.zoom = 2.2;
+} else if (only != null && !q.has('zoom')) view.zoom = 2.2;
+if (q.has('tx')) view.target.set(num('tx', 0), num('ty', 1), num('tz', 0));
+placeCamera();
+engine.labels?.setZoom?.(view.zoom);
+
+// ---- actions ---------------------------------------------------------------------------------------------
+const clone = (o) => JSON.parse(JSON.stringify(o));
+const targets = () => (q.has('target') ? entries.filter((e) => e.i === parseInt(q.get('target'), 10)) : entries);
+function upd(e, mut) { const prev = clone(e.s); mut(e.s); e.b.update(e.s, prev); }
+const actions = {
+  compact() {
+    for (const e of targets()) {
+      const pre = e.s.context.used, post = Math.round(pre * 0.18 + 20000);
+      upd(e, (s) => { s.compactions += 1; s.lastCompaction = { at: Date.now(), pre, post, trigger: 'auto' }; s.context.used = post; });
+      e.b.compaction({ key: e.s.key, pre, post, trigger: 'auto' });
+    }
+  },
+  clear() {
+    for (const e of targets()) {
+      upd(e, (s) => { s.clears += 1; s.sessionId += 'x'; s.tools = { edit: 0, bash: 0, read: 0, search: 0, web: 0, agent: 0, mcp: 0, plan: 0, skill: 0, other: 0 }; s.context.used = 16000; });
+      e.b.clear({ key: e.s.key });
+    }
+  },
+  end() { for (const e of targets()) e.b.end().then(() => { log(`${e.s.faction} ended`); }); },
+  unlock() {
+    for (const e of targets()) upd(e, (s) => { for (const k of ['edit', 'bash', 'read', 'web', 'agent', 'mcp']) { const v = s.tools[k] + (k === 'read' ? s.tools.search : 0); s.tools[k] = v >= 100 ? v : v >= 25 ? 100 : v >= 3 ? 25 : 3; } });
+  },
+  ramp() {
+    const t0 = engine.time;
+    for (const e of targets()) e.ramp = { t0, from: e.s.context.used };
+  },
+  addproc() { for (const e of targets()) upd(e, (s) => { s.procs.push({ pid: 9000 + Math.floor(Math.random() * 999), name: 'node', cmd: 'node x', cpu: 0.8, since: Date.now() }); }); },
+  killproc() { for (const e of targets()) upd(e, (s) => { s.procs.shift(); }); },
+  vet() { for (const e of targets()) upd(e, (s) => { s.agentsDone += 1; }); },
+  spawn() { for (const e of targets()) upd(e, (s) => { s.agents.push({ id: 'a' + Math.random(), state: 'working' }); }); },
+  state(name) { for (const e of targets()) upd(e, (s) => { s.state = name; s.tool = ['working', 'waiting', 'needs_input'].includes(name) ? { name: 'Tool', cat: CATS[e.i] || 'edit', since: Date.now() } : null; }); },
+  night() { daylight = daylight > 0.5 ? 0 : 1; applyDaylight(); },
+  // Data-only changes (no event call): exercises the building's own auto-trigger fallback.
+  autocompact() { for (const e of targets()) { const pre = e.s.context.used; upd(e, (s) => { s.compactions += 1; s.lastCompaction = { at: Date.now(), pre, post: Math.round(pre * 0.2) }; s.context.used = Math.round(pre * 0.2); }); } },
+  autoclear() { for (const e of targets()) upd(e, (s) => { s.clears += 1; s.tools = { edit: 0, bash: 0, read: 0, search: 0, web: 0, agent: 0, mcp: 0, plan: 0, skill: 0, other: 0 }; s.context.used = 12000; }); },
+  fswap() { const order = ['opus', 'sonnet', 'haiku', 'fable', 'merc']; for (const e of targets()) upd(e, (s) => { s.faction = order[(order.indexOf(s.faction) + 1) % 5]; }); },
+  grow() { for (const e of targets()) upd(e, (s) => { for (const k of ['edit', 'bash', 'read']) s.tools[k] += 4; }); },
+};
+const schedule = [];
+for (const k of ['compact', 'clear', 'end', 'unlock', 'ramp', 'addproc', 'killproc', 'vet', 'spawn', 'autocompact', 'autoclear', 'fswap', 'grow']) {
+  if (q.has(k)) for (const t of q.get(k).split(',')) schedule.push({ at: parseFloat(t) || 0, fn: () => actions[k]() });
+}
+if (q.has('state')) for (const part of q.get('state').split(',')) { const [t, name] = part.split(':'); schedule.push({ at: parseFloat(t), fn: () => actions.state(name) }); }
+schedule.sort((a, b) => a.at - b.at);
+
+const ui = document.getElementById('ui');
+for (const [label, fn] of [['Compaction', actions.compact], ['/clear', actions.clear], ['End', actions.end], ['Unlock modules', actions.unlock], ['Context ramp', actions.ramp],
+  ['+proc', actions.addproc], ['-proc', actions.killproc], ['Veterancy+', actions.vet], ['Spawn agent', actions.spawn], ['Day/Night', actions.night],
+  ...['working', 'thinking', 'waiting', 'needs_input', 'idle', 'asleep'].map((s) => [s, () => actions.state(s)])]) {
+  const b = document.createElement('button'); b.textContent = label; b.onclick = fn; ui.appendChild(b);
+}
+const hud = document.getElementById('hud');
+const logs = [];
+function log(t) { logs.unshift(t); logs.length = Math.min(logs.length, 4); }
+
+// ---- loop ------------------------------------------------------------------------------------------------
+function step(dt) {
+  engine.time += dt;
+  while (schedule.length && schedule[0].at <= engine.time) { try { schedule.shift().fn(); } catch (e) { console.error(e); } }
+  for (const e of entries) {
+    if (!e.ramp) continue;
+    const k = Math.min(1, (engine.time - e.ramp.t0) / 6);
+    if (Math.floor(k * 12) !== e.rampStep) { e.rampStep = Math.floor(k * 12); upd(e, (s) => { s.context.used = Math.round(e.ramp.from + (0.97 * s.context.max - e.ramp.from) * k); }); }
+    if (k >= 1) e.ramp = null;
+  }
+  tickTweens(dt);
+  for (const fn of frameFns) fn(dt, engine.time);
+  for (const e of entries) { try { e.b.tick(dt, engine.time); } catch (err) { console.error(err); } }
+  engine.fx?.tick?.(dt);
+}
+function render() {
+  renderer.render(scene, cam);
+  // Harness workaround: labels.js starts L.x as NaN, and NaN comparisons never trigger the first placement.
+  if (engine.labels?.list) for (const L of engine.labels.list) if (Number.isNaN(L.x)) L.x = -1e6;
+  engine.labels?.update?.();
+  let meshes = 0; root.traverse((o) => { if (o.isMesh) meshes++; });
+  if (q.has('diag')) {
+    const cnt = (o) => { let n = 0; o?.traverse?.((x) => { if (x.isMesh) n++; }); return n; };
+    const b0 = entries[parseInt(q.get('diag'), 10) || 0].b;
+    const parts = { core: cnt(b0.coreHolder), silo: cnt(b0.siloHolder), grounds: cnt(b0.grounds), fxl: cnt(b0.fxl), ind: cnt(b0.indAnchor) };
+    for (const [cat, m] of b0.modules) parts['mod_' + cat] = cnt(m.group);
+    parts.table = cnt(b0.table); parts.banner = cnt(b0.bannerPole.group); parts.pallet = cnt(b0.pallet);
+    let gens = 0; for (const g of b0.gens.values()) gens += cnt(g.group); parts.gens = gens;
+    logs[0] = JSON.stringify(parts);
+  }
+  hud.textContent = `calls=${renderer.info.render.calls} meshes=${meshes} t=${engine.time.toFixed(2)}  ${entries.map((e) => `${e.s.faction}:${e.b.state}${e.b._busy ? '(' + e.b._busy + ')' : ''}`).join('  ')}  ${logs.join(' | ')}`;
+}
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); engine.labels?.resize?.(innerWidth, innerHeight); placeCamera(); });
+
+if (q.has('at')) {
+  const T = num('at', 2);
+  const dt = 1 / 30;
+  while (engine.time < T - 1e-6) {
+    step(Math.min(dt, T - engine.time));
+    for (let i = 0; i < 8; i++) await null;
+  }
+  render();
+  document.title = 'ready';
+  const hold = () => { render(); requestAnimationFrame(hold); };
+  requestAnimationFrame(hold);
+} else {
+  let last = performance.now();
+  const loop = (now) => {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    step(dt);
+    render();
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
+}
+window.__h = { engine, entries, actions, view, placeCamera, render, step };
+</script>
+</body>
+</html>

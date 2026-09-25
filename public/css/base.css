@@ -1,0 +1,366 @@
+/* Page basics, loading splash, error overlay, and the generic world-label + fx vocabulary.
+   HUD chrome lives in hud.css (another module). Label markup helpers: public/js/world/labels.js. */
+
+:root {
+  --navy: #0e1630;
+  --navy-a: rgba(14, 22, 48, 0.85);
+  --gold: #ffc53d;
+  --cyan: #39e5ff;
+  --ink: #1d1f2b;
+  --font-title: 'Lilita One', 'Arial Rounded MT Bold', 'Arial Black', system-ui, sans-serif;
+  --font-body: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b1230;
+  color: #fff;
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+#stage { position: fixed; inset: 0; z-index: 0; }
+.cnc-canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
+.cnc-canvas.dragging { cursor: grabbing !important; }
+
+/* HUD root: hud.css makes its own panels interactive. */
+#hud { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+
+/* ---- splash ---------------------------------------------------------------------------------------------- */
+
+#splash {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at 50% 38%, #1d2d63 0%, #0b1230 58%, #060a1c 100%);
+  transition: opacity 0.7s ease, visibility 0.7s;
+}
+#splash.out { opacity: 0; visibility: hidden; pointer-events: none; }
+.splash-inner { text-align: center; padding: 2em; }
+.splash-mark { width: 64px; height: 64px; filter: drop-shadow(0 0 18px rgba(57, 229, 255, 0.55)); animation: cnc-bob 2.4s ease-in-out infinite; }
+.splash-logo {
+  margin-top: 10px;
+  font-family: var(--font-title);
+  font-size: clamp(34px, 6vw, 76px);
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-shadow: 0 5px 0 #070b1c, 0 0 34px rgba(57, 229, 255, 0.35);
+}
+.splash-logo span { color: var(--gold); }
+.splash-sub { margin-top: 0.7em; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; font-size: 13px; color: #8fb6ff; }
+.splash-bar {
+  width: min(380px, 70vw);
+  height: 10px;
+  margin: 30px auto 16px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 2px rgba(255, 197, 61, 0.35);
+  overflow: hidden;
+}
+.splash-bar i {
+  display: block;
+  height: 100%;
+  width: 38%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyan), var(--gold));
+  animation: cnc-load 1.4s ease-in-out infinite;
+}
+.splash-line { min-height: 1.4em; font-size: 17px; font-weight: 500; color: #e2eaff; }
+.splash-line.in { animation: cnc-fade 0.45s ease both; }
+.splash-status { margin-top: 12px; font-size: 12px; color: #7f8db3; letter-spacing: 0.14em; text-transform: uppercase; }
+#splash.failed .splash-bar i { animation: none; width: 100%; background: #ff4d4d; }
+#splash.failed .splash-line { color: #ffb3b3; }
+
+@keyframes cnc-load { 0% { transform: translateX(-110%); } 100% { transform: translateX(270%); } }
+@keyframes cnc-fade { 0% { opacity: 0; transform: translateY(6px); } 100% { opacity: 1; transform: none; } }
+@keyframes cnc-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+
+/* ---- error overlay ------------------------------------------------------------------------------------------ */
+
+#errors {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  z-index: 100;
+  max-width: min(760px, calc(100vw - 24px));
+  max-height: 45vh;
+  overflow: auto;
+  background: rgba(118, 8, 22, 0.95);
+  border: 2px solid #ff4d4d;
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font: 12px/1.4 ui-monospace, Consolas, monospace;
+  pointer-events: auto;
+  user-select: text;
+}
+#errors .err-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.25);
+  font: 700 13px var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+#errors button { background: none; border: 0; color: #fff; font-size: 20px; line-height: 1; cursor: pointer; }
+#errors ol { margin: 0; padding: 6px 12px 8px 30px; }
+#errors li { margin: 2px 0; word-break: break-word; }
+#errors .w { color: #ffb3b3; }
+#errors .n { color: #ffd23f; font-weight: 700; }
+
+/* ?debug readout (engine.js) */
+#cnc-debug {
+  position: fixed;
+  right: 8px;
+  bottom: 8px;
+  z-index: 90;
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.72);
+  border-radius: 6px;
+  color: #7dffa1;
+  font: 11px/1.35 ui-monospace, Consolas, monospace;
+  white-space: pre;
+  pointer-events: none;
+}
+
+/* ---- world labels (DOM overlay positioned by engine.labels) ---------------------------------------------------- */
+
+#labels {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: hidden;
+  contain: strict;
+  font-size: calc(13px * var(--ls, 1));   /* --ls = zoom x screen scale; px-based labels can use --lk (screen only) */
+}
+.lbl { position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform; }
+.lbl:not(.always) { transition: opacity 0.22s ease; }
+.lbl.occluded { opacity: 0; }      /* decluttered: overlaps a higher-priority label (labels.js layout) */
+.lbl[hidden] { display: none !important; }
+#labels.mode-off .lbl:not(.always) { display: none; }
+#labels.mode-hover .lbl:not(.always):not(.hot) { display: none; }
+.lbl.hot { z-index: 19000 !important; }   /* above other labels, below fx text / bubbles (20000+) */
+/* cluster summary tags (labels.cluster): the only labels that take the pointer (hover peeks, click zooms in) */
+.lbl.lbl-sum { pointer-events: auto; cursor: pointer; }
+.lbl.lbl-sum.occluded { pointer-events: none; }
+.lbl.lbl-sum.peek { z-index: 19500 !important; }
+
+/* card: the standard label body. Sits on its anchor with a little pointer. */
+.lbl-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.28em;
+  margin-bottom: 0.55em;
+  padding: 0.3em 0.62em 0.36em;
+  background: linear-gradient(180deg, rgba(24, 35, 72, 0.92), rgba(12, 18, 40, 0.9));
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0.62em;
+  box-shadow: 0 0.16em 0 rgba(0, 0, 0, 0.35), 0 0.35em 0.9em rgba(0, 0, 0, 0.22);
+  color: #fff;
+}
+.lbl-card::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -0.5em;
+  margin-left: -0.42em;
+  border: 0.42em solid transparent;
+  border-top: 0.5em solid rgba(12, 18, 40, 0.9);
+  border-bottom: 0;
+}
+.lbl .l1 { display: flex; align-items: center; gap: 0.42em; }
+.lbl .l2 { display: flex; align-items: center; gap: 0.45em; font-size: 0.82em; color: #cfe0ff; }
+.lbl .name { font-family: var(--font-title); font-size: 1.08em; letter-spacing: 0.02em; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.55); }
+.lbl .branch, .lbl .repo { font-weight: 600; color: #9ff1ff; }
+.lbl .repo { font-size: 0.8em; opacity: 0.85; }
+.lbl.hot .lbl-card { border-color: rgba(57, 229, 255, 0.85); box-shadow: 0 0 0 1px rgba(57, 229, 255, 0.35), 0 0.35em 0.9em rgba(0, 0, 0, 0.3); }
+
+/* faction chip: a tiny glowing diamond */
+.fchip {
+  display: inline-block;
+  flex: none;
+  width: 0.72em;
+  height: 0.72em;
+  border-radius: 0.18em;
+  background: var(--fc, #8a94a6);
+  box-shadow: 0 0 0 0.12em rgba(255, 255, 255, 0.3), 0 0 0.55em var(--fc, #8a94a6);
+  transform: rotate(45deg);
+}
+.f-opus { --fc: #7a4dff; }
+.f-sonnet { --fc: #1fb5e8; }
+.f-haiku { --fc: #9be22d; }
+.f-fable { --fc: #e24bd0; }
+.f-merc { --fc: #8a94a6; }
+
+/* slim context bar */
+.ctx {
+  display: inline-block;
+  width: 6.4em;
+  height: 0.46em;
+  border-radius: 0.3em;
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.ctx > i {
+  display: block;
+  height: 100%;
+  width: var(--p, 0%);
+  border-radius: inherit;
+  background: var(--cc, #39e5ff);
+  box-shadow: 0 0 0.5em var(--cc, #39e5ff);
+  transition: width 0.6s ease;
+}
+.ctxn { font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+
+/* state chips */
+.st {
+  display: inline-block;
+  flex: none;
+  padding: 0.34em 0.5em 0.28em;
+  border-radius: 0.36em;
+  background: #56607a;
+  color: #fff;
+  font: 700 0.7em/1 var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.st-working { background: #2fcf78; color: #052a15; }
+.st-thinking { background: #8f63ff; }
+.st-waiting { background: #7d879c; }
+.st-needs_input {
+  background: #ffd23f;
+  color: #231a00;
+  animation: cnc-needs 0.9s ease-in-out infinite;
+}
+.st-idle { background: #ff9f5a; color: #3a1700; }
+.st-asleep { background: #34407a; color: #cdd6ff; }
+.st-ended { background: #3a3d48; color: #aab0c0; }
+.st-stalled { background: #b8792a; }
+.st-done { background: #2fcf78; color: #052a15; }
+.st-failed { background: #e04848; }
+.st-lost { background: #555a6a; }
+.st-port { background: rgba(57, 229, 255, 0.16); color: #a6f3ff; box-shadow: inset 0 0 0 1px rgba(57, 229, 255, 0.45); letter-spacing: 0.02em; }
+.st-adrift { background: linear-gradient(180deg, #ffb347, #ff7a2f); color: #2a1000; box-shadow: inset 0 0 0 1px rgba(122, 30, 0, 0.45); }
+.lbl-card.alert { border-color: #ffd23f; animation: cnc-alert 0.9s ease-in-out infinite; }
+.lbl-card.alert::after { border-top-color: #ffd23f; }
+
+@keyframes cnc-needs {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 210, 63, 0.75); }
+  50% { transform: scale(1.13); box-shadow: 0 0 0.9em 0.25em rgba(255, 210, 63, 0.7); }
+}
+@keyframes cnc-alert {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(255, 210, 63, 0.35), 0 0 0.8em rgba(255, 210, 63, 0.3); }
+  50% { box-shadow: 0 0 0 3px rgba(255, 210, 63, 0.6), 0 0 1.8em rgba(255, 210, 63, 0.65); }
+}
+
+/* label flavors */
+.lbl-island .lbl-card { background: linear-gradient(180deg, rgba(74, 46, 14, 0.9), rgba(46, 28, 8, 0.88)); border-color: rgba(255, 197, 61, 0.55); }
+.lbl-island .lbl-card::after { border-top-color: rgba(46, 28, 8, 0.88); }
+.lbl-island .name { color: #ffe38a; }
+.lbl-port { font-size: 0.86em; }
+.lbl-port .lbl-card { padding: 0.22em 0.5em 0.26em; }
+.lbl-town .name { color: #fff3b8; }
+
+/* zoom LOD: container class set by the engine. Far out only sessions + islands (and whatever is hovered). */
+#labels.lod-mid .lbl.minor .detail { display: none; }
+#labels.lod-far .detail { display: none; }
+#labels.lod-far .lbl.minor:not(.hot),
+#labels.lod-far .lbl.k-port:not(.hot),
+#labels.lod-far .lbl.k-agent:not(.hot) { display: none; }
+
+/* vessel names truncate hard (~14 chars) so harbor labels stay compact */
+.lbl.k-port .name { display: inline-block; max-width: 7.6em; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+#labels.lod-far .lbl-card { padding: 0.2em 0.45em 0.24em; }
+
+/* ---- fx: comic-book floating text, speech bubbles, Zzz ------------------------------------------------------------- */
+
+.fx-text { font-family: var(--font-title); font-size: calc(24px * var(--ls, 1)); line-height: 1; }
+.fx-text > span {
+  display: inline-block;
+  color: var(--c, #fff);
+  font-size: calc(1em * var(--fs, 1));
+  letter-spacing: 0.03em;
+  -webkit-text-stroke: 0.035em var(--ink);
+  text-shadow:
+    -0.06em -0.06em 0 var(--ink), 0.06em -0.06em 0 var(--ink), -0.06em 0.06em 0 var(--ink), 0.06em 0.06em 0 var(--ink),
+    0 -0.07em 0 var(--ink), 0 0.07em 0 var(--ink), -0.07em 0 0 var(--ink), 0.07em 0 0 var(--ink),
+    0 0.15em 0 var(--ink), 0 0.22em 0.35em rgba(0, 0, 0, 0.35);
+  transform-origin: 50% 100%;
+  animation: cnc-pop 0.42s cubic-bezier(0.2, 1.9, 0.45, 1) both;
+}
+
+.fx-bubble {
+  position: relative;
+  max-width: 17em;
+  margin-bottom: 0.95em;
+  padding: 0.45em 0.8em;
+  white-space: normal;
+  text-align: center;
+  background: #fff;
+  color: var(--ink);
+  border: 0.18em solid var(--ink);
+  border-radius: 1em;
+  box-shadow: 0 0.22em 0 rgba(29, 31, 43, 0.35);
+  font: 700 1em/1.25 var(--font-body);
+  transform-origin: 50% 100%;
+  animation: cnc-pop 0.32s cubic-bezier(0.2, 1.8, 0.45, 1) both;
+}
+.fx-bubble::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -0.8em;
+  margin-left: -0.55em;
+  border-left: 0.55em solid transparent;
+  border-right: 0.55em solid transparent;
+  border-top: 0.8em solid var(--ink);
+}
+.fx-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -0.5em;
+  margin-left: -0.36em;
+  border-left: 0.36em solid transparent;
+  border-right: 0.36em solid transparent;
+  border-top: 0.56em solid #fff;
+}
+
+.fx-zzz { position: relative; width: 2.6em; height: 3.6em; font-family: var(--font-title); color: #e3ebff; }
+.fx-zzz b {
+  position: absolute;
+  left: 0.2em;
+  bottom: 0;
+  font-size: 1.35em;
+  font-weight: 400;
+  opacity: 0;
+  text-shadow: 0 0 0.12em #1d2450, 0 0.08em 0 #1d2450;
+  animation: cnc-z 2.7s linear infinite;
+}
+.fx-zzz b:nth-child(2) { animation-delay: 0.9s; font-size: 1.1em; }
+.fx-zzz b:nth-child(3) { animation-delay: 1.8s; font-size: 0.9em; }
+
+@keyframes cnc-pop { 0% { transform: scale(0.2); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes cnc-z {
+  0% { transform: translate(0, 0) scale(0.5) rotate(-10deg); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translate(1.5em, -2.9em) scale(1.25) rotate(8deg); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .st-needs_input, .lbl-card.alert, .splash-mark { animation-duration: 2.4s; }
+}

@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Islands harness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=Lilita+One&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #7fd6e6; font-family: "Chakra Petch", sans-serif; }
+  canvas { display: block; }
+  #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  #labels > .lbl { position: absolute; left: 0; top: 0; will-change: transform; white-space: nowrap; }
+  #err { position: fixed; left: 8px; bottom: 8px; max-width: 70vw; background: #b00020; color: #fff; font: 12px monospace;
+         padding: 6px 8px; white-space: pre-wrap; display: none; z-index: 9; }
+  #info { position: fixed; right: 8px; top: 8px; color: #0e1630; font: 12px monospace; background: #ffffffaa; padding: 4px 6px; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="labels"></div>
+<div id="err"></div>
+<div id="info"></div>
+<script>
+  const errs = [];
+  const show = (m) => { errs.push(m); const e = document.getElementById('err'); e.style.display = 'block'; e.textContent = errs.slice(-6).join('\n'); };
+  window.addEventListener('error', (e) => show('ERR ' + (e.error?.stack || e.message)));
+  window.addEventListener('unhandledrejection', (e) => show('REJ ' + (e.reason?.stack || e.reason)));
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { tickTweens, PAL } from '/js/world/kit.js';
+import { Island, PortTown } from '/js/world/islands.js';
+
+const Q = new URLSearchParams(location.search);
+const num = (k, d) => (Q.has(k) ? Number(Q.get(k)) : d);
+let W = innerWidth, H = innerHeight;
+let lastFrame = null;
+addEventListener('resize', () => { W = innerWidth; H = innerHeight; renderer.setSize(W, H); if (lastFrame) frame(...lastFrame); });
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(1.5, devicePixelRatio));
+renderer.setSize(W, H);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const root = new THREE.Group();
+scene.add(root);
+
+const daylight = Q.has('night') ? 0 : Q.has('dusk') ? 0.45 : 1;
+const skyDay = new THREE.Color(0x9fe3f0), skyNight = new THREE.Color(0x1b1f4a);
+scene.background = skyNight.clone().lerp(skyDay, daylight);
+
+const hemi = new THREE.HemisphereLight(0xdff4ff, 0x6a5a3a, 0.35 + 1.15 * daylight);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(daylight > 0.5 ? 0xfff0d2 : 0x8fa0ff, 0.25 + 2.1 * daylight);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+scene.add(sun, sun.target);
+
+// sea
+const seaGeo = new THREE.PlaneGeometry(600, 600, 60, 60).rotateX(-Math.PI / 2);
+const sea = new THREE.Mesh(seaGeo, new THREE.MeshLambertMaterial({ color: new THREE.Color(PAL.sea).lerp(new THREE.Color(0x14306a), 1 - daylight), flatShading: true }));
+sea.receiveShadow = true;
+scene.add(sea);
+
+// camera (ortho iso)
+const az = num('az', 45) * Math.PI / 180, el = 35 * Math.PI / 180;
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+const target = new THREE.Vector3();
+function frame(cx, cz, halfH) {
+  lastFrame = [cx, cz, halfH];
+  target.set(cx, 1, cz);
+  const d = 200;
+  camera.position.set(cx + d * Math.cos(el) * Math.sin(az), d * Math.sin(el), cz + d * Math.cos(el) * Math.cos(az));
+  camera.lookAt(target);
+  camera.top = halfH; camera.bottom = -halfH; camera.left = -halfH * W / H; camera.right = halfH * W / H;
+  camera.updateProjectionMatrix();
+  sun.position.set(cx + 30, 60, cz + 18); sun.target.position.set(cx, 0, cz);
+  const s = sun.shadow.camera; const e = Math.max(18, halfH * 1.6);
+  s.left = -e; s.right = e; s.top = e; s.bottom = -e; s.near = 1; s.far = 200; s.updateProjectionMatrix();
+}
+
+// ---- stub engine ----
+const labelsRoot = document.getElementById('labels');
+const labelList = new Set();
+const cssDone = new Set();
+const frameFns = new Set();
+const engine = {
+  THREE, renderer, scene, camera, root, time: 0, daylight,
+  onFrame(fn) { frameFns.add(fn); return () => frameFns.delete(fn); },
+  serverNow: () => Date.now(),
+  labels: {
+    add({ object, offset, html, className }) {
+      const el = document.createElement('div');
+      el.className = 'lbl ' + (className || '');
+      el.innerHTML = html;
+      labelsRoot.appendChild(el);
+      const L = { object, offset: offset ? offset.clone() : new THREE.Vector3(), el, visible: true };
+      labelList.add(L);
+      return { el, set(h) { el.innerHTML = h; }, setVisible(b) { L.visible = b; el.style.display = b ? '' : 'none'; }, remove() { el.remove(); labelList.delete(L); } };
+    },
+    css(id, text) { if (cssDone.has(id)) return; cssDone.add(id); const s = document.createElement('style'); s.textContent = text; document.head.appendChild(s); },
+  },
+  fx: Q.has('fx') ? {} : undefined,
+  pick: { add() {}, remove() {} },
+  bus: { on() {}, emit() {} },
+  settings: { labels: 'all', reduceMotion: Q.has('reduce'), quality: 'high', on() {} },
+};
+const tmpV = new THREE.Vector3();
+function placeLabels() {
+  for (const L of labelList) {
+    if (!L.visible || !L.object) continue;
+    L.object.getWorldPosition(tmpV).add(L.offset).project(camera);
+    const x = (tmpV.x * 0.5 + 0.5) * W, y = (-tmpV.y * 0.5 + 0.5) * H;
+    L.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
+  }
+}
+
+// ---- test world ----
+const world = { engine, islands: new Map(), buildings: new Map(), units: new Map(), vessels: new Map(), layout: new Map(), snapshot: { ports: [] } };
+window.world = world;
+
+const RAD = (tier, sessions) => ({ 0: 6, 1: 7, 2: 8.5, 3: 10, 4: 12 }[tier] + 1.4 * Math.max(0, sessions - 2));
+const specs = [
+  { id: 'c:/users/dev/downloads/command-and-context', name: 'command-and-context', kind: 'camp', tier: 0, git: null, annexes: [], sessions: 1, lots: 1 },
+  { id: 'c:/scratch/sandbox-437cc3', name: 'Sandbox 437cc3', kind: 'sandbox', tier: 0, git: null, annexes: [], sessions: 1, lots: 1 },
+  { id: 'c:/users/dev', name: 'Homestead', kind: 'home', tier: 0, git: null, annexes: [], sessions: 1, lots: 1 },
+  { id: 'c:/tiny-cli', name: 'tiny-cli', kind: 'repo', tier: 1, git: { files: 40, commits: 12, branches: 2, langs: ['Go'], branch: 'main' }, annexes: [], sessions: 2, lots: 2 },
+  { id: 'c:/ops-scripts', name: 'ops-scripts', kind: 'repo', tier: 2, git: { files: 724, commits: 88, branches: 4, langs: ['PowerShell'], branch: 'main' }, annexes: [], sessions: 2, lots: 2 },
+  { id: 'c:/storefront-nuxt', name: 'storefront-nuxt', kind: 'repo', tier: 3, git: { files: 1621, commits: 1769, branches: 29, langs: ['TypeScript', 'Vue'], branch: 'feature/gift-cards' }, annexes: [], sessions: 2, lots: 2 },
+  { id: 'c:/monorepo', name: 'mega-monorepo', kind: 'repo', tier: 4, git: { files: 9000, commits: 5200, branches: 7, langs: ['TypeScript'], branch: 'release/2026.9' }, annexes: [], sessions: 2, lots: 2 },
+  { id: 'c:/worktrees-app', name: 'worktrees-app', kind: 'repo', tier: 2, git: { files: 300, commits: 400, branches: 5, langs: ['Rust'], branch: 'main' },
+    annexes: [{ id: 'c:/worktrees-app-wt/fix-login', name: 'fix-login', branch: 'fix/login' }, { id: 'c:/worktrees-app-wt/perf', name: 'perf', branch: 'perf/cache' }], sessions: 3, lots: 1, annexLots: 2 },
+  { id: 'c:/crowded', name: 'crowded', kind: 'repo', tier: 1, git: { files: 90, commits: 30, branches: 1, langs: ['Python'], branch: 'main' }, annexes: [], sessions: 2, lots: 7 },
+];
+const only = Q.get('only');
+const FACT = ['opus', 'sonnet', 'haiku', 'fable', 'merc'];
+
+// layout: ring around the town
+let town;
+try {
+  town = new PortTown(world, { position: new THREE.Vector3(0, 0, 0), radius: 7 });
+  root.add(town.group);
+} catch (e) {
+  show('town ctor: ' + e.stack);
+  town = { tick() {}, allocDock() { return null; }, setLighthouse() {}, group: new THREE.Group() };
+}
+world.town = town;
+const placed = [];
+let ang = -0.4;
+const ringR = num('ring', 46);
+specs.forEach((s, i) => {
+  if (only != null && !only.split(',').includes(String(i))) return;
+  const r = RAD(s.tier, s.sessions);
+  const a = ang + i * (Math.PI * 2 / specs.length);
+  const p = new THREE.Vector3(Math.cos(a) * ringR, 0, Math.sin(a) * ringR);
+  world.layout.set(s.id, { x: p.x, z: p.z, r });
+  placed.push({ s, p, r });
+});
+const islands = [];
+for (const { s, p, r } of placed) {
+  let isl;
+  try { isl = new Island(world, s, { position: p, radius: r }); } catch (e) { show('ctor ' + s.name + ': ' + e.stack); continue; }
+  root.add(isl.group);
+  world.islands.set(s.id, isl);
+  islands.push(isl);
+  // dummy buildings
+  const nLots = s.lots;
+  for (let k = 0; k < nLots; k++) addBuilding(isl, `${s.id}#${k}`, null, k);
+  (s.annexes || []).forEach((a, k) => addBuilding(isl, `${s.id}#a${k}`, a.id, k + 5));
+  // dummy vessels
+  const nd = s.kind === 'repo' ? 2 : 1;
+  for (let k = 0; k < nd; k++) addBoat(isl, `${s.id}:p${k}`, false, [':3000', ':5173', ':8080'][k]);
+}
+// town vessels: lots of docker ships plus plain ones
+for (let k = 0; k < num('ships', 10); k++) addBoat(town, `ctr${k}`, true, ':' + (54320 + k));
+for (let k = 0; k < num('boats', 3); k++) addBoat(town, `plain${k}`, false, ':' + (8000 + k));
+town.setLighthouse?.({ port: 7432, conns: 1, kind: 'lighthouse' });
+world.snapshot.ports = [{ id: 'ctr0', activity: 0.8 }, { id: 'ctr1', activity: 0.5 }];
+
+function addBuilding(isl, key, annex, k) {
+  let lot;
+  try { lot = isl.allocLot(key, annex ? { annex } : undefined); } catch (e) { show('allocLot: ' + e.stack); return; }
+  if (!lot) return;
+  const col = PAL.faction[FACT[k % FACT.length]];
+  const g = new THREE.Group();
+  const core = new THREE.Mesh(new THREE.BoxGeometry(3.0, 2.4, 3.0).translate(0, 1.2, 0), new THREE.MeshLambertMaterial({ color: col.main, flatShading: true }));
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.3, 0.2).translate(0, 0.65, 1.55), new THREE.MeshLambertMaterial({ color: col.trim }));
+  const table = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.5, 0.7).translate(1.9, 0.25, 1.6), new THREE.MeshLambertMaterial({ color: PAL.wood }));
+  core.castShadow = door.castShadow = table.castShadow = true;
+  g.add(core, door, table);
+  if (Q.has('lots')) {
+    const sq = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(lot.size, lot.size).rotateX(-Math.PI / 2)), new THREE.LineBasicMaterial({ color: 0xff00ff }));
+    sq.position.y = 0.05; g.add(sq);
+  }
+  g.position.copy(lot.position);
+  g.rotation.y = lot.facing;
+  root.add(g);
+}
+function addBoat(isl, id, container, sign) {
+  let d;
+  try { d = isl.allocDock(id, container ? { container: true } : undefined); } catch (e) { show('allocDock: ' + e.stack); return; }
+  if (!d) return;
+  try { d.setSign?.(sign); } catch (e) { show('setSign: ' + e.stack); }
+  const g = new THREE.Group();
+  const L = container ? 4.4 : 2.6, B = container ? 1.8 : 1.2;
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(B, 0.7, L).translate(0, 0.2, 0), new THREE.MeshLambertMaterial({ color: container ? 0x2b5fb3 : 0x5fa04e, flatShading: true }));
+  const bow = new THREE.Mesh(new THREE.ConeGeometry(B * 0.5, 0.9, 4).rotateX(Math.PI / 2).translate(0, 0.35, L / 2 + 0.4), hull.material);
+  hull.castShadow = true; g.add(hull, bow);
+  if (container) for (let j = 0; j < 4; j++) {
+    const c = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.6, 1.2).translate(0, 0.85, 0), new THREE.MeshLambertMaterial({ color: [0xff5a4e, 0xffc53d, 0x3ddc84, 0x39a0ff][j] }));
+    c.position.set((j % 2 - 0.5) * 0.8, 0, (Math.floor(j / 2) - 0.5) * 1.3); c.castShadow = true; g.add(c);
+  }
+  g.position.copy(d.berth);
+  g.rotation.y = d.facing;
+  root.add(g);
+}
+
+// ---- framing ----
+const focus = Q.get('focus');
+if (focus === 'town') frame(0, 0, num('zoom', 12));
+else if (focus != null && islands[Number(focus)]) { const i = islands[Number(focus)]; frame(i.group.position.x, i.group.position.z, num('zoom', i.radius * 1.35)); }
+else if (only != null && islands.length === 1) frame(islands[0].group.position.x, islands[0].group.position.z, num('zoom', islands[0].radius * 1.4));
+else frame(0, 0, num('zoom', 58));
+
+// ---- launches ----
+const kinds = ['commit', 'pull', 'checkout', 'push', 'merge'];
+let nextLaunch = num('first', 1.5), li = 0;
+const launchEvery = num('every', 2.2);
+const msgs = ['fix: stop the linter from eating tests', 'feat: add rocket boosters', 'chore: bump deps (again)', 'refactor: rename utils2 -> utils'];
+const branches = ['main', 'feature/lighthouse', 'fix/sea-serpent', 'release/v2'];
+
+// emulate engine.js boostEmissive(): shared glowing materials get brighter at night
+const nightBoost = 1 + 0.8 * (1 - daylight);
+engine.nightBoost = nightBoost;
+function boostEmissive() {
+  root.traverse((o) => {
+    const ms = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const x of ms) {
+      if (!x.userData?.shared || !x.emissive || (x.emissive.r + x.emissive.g + x.emissive.b) === 0) continue;
+      const base = x.userData.baseEmissive ?? (x.userData.baseEmissive = x.emissiveIntensity);
+      x.emissiveIntensity = base * nightBoost;
+    }
+  });
+}
+boostEmissive();
+setTimeout(boostEmissive, 1500);
+
+let last = performance.now();
+function step(dt) {
+  engine.time += dt;
+  const t = engine.time;
+  tickTweens(dt);
+  for (const f of frameFns) f(dt, t);
+  if (!Q.has('nolaunch') && islands.length && t > nextLaunch) {
+    nextLaunch = t + launchEvery;
+    const isl = islands[li % islands.length];
+    const kind = Q.get('launch') || kinds[Math.floor(li / islands.length) % kinds.length];
+    const skip = num('skip', 0);
+    li++;
+    try {
+      if (kind === 'commit') isl.launch('commit', { msg: msgs[li % msgs.length], hash: 'abc1234', branch: 'main', name: isl.data.name });
+      else if (kind === 'pull') isl.launch('pull', { msg: 'Merge origin/main', branch: 'main' });
+      else if (kind === 'push') isl.launch('push', { remote: 'origin', branch: isl.data.git?.branch || 'main', hash: 'abc1234', count: num('count', 3), newBranch: false, _skip: skip });
+      else if (kind === 'maiden') isl.launch('push', { remote: 'origin', branch: 'feature/lighthouse', hash: 'abc1234', count: null, newBranch: true, _skip: skip });
+      else if (kind === 'merge') isl.launch('merge', { msg: "Merge branch 'feature/login'", from: Q.get('from') ?? 'feature/login', hash: 'def5678', branch: isl.data.git?.branch || 'main', _skip: skip });
+      else isl.launch('checkout', { from: isl.data.git?.branch, to: branches[li % branches.length], branch: branches[li % branches.length] });
+    } catch (e) { show('launch: ' + e.stack); }
+  }
+  try { town.tick(dt, t); } catch (e) { show('town tick: ' + e.stack); }
+  for (const isl of islands) { try { isl.tick(dt, t); } catch (e) { show('tick ' + isl.data.name + ': ' + e.stack); } }
+}
+// ?sim=<s>: fast-forward the simulation before the first frame (headless screenshots barely advance time)
+for (let k = 0, n = Math.round(num('sim', 0) * 30); k < n; k++) { step(1 / 30); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); }
+function loop(now) {
+  const dt = Math.max(0, Math.min(0.1, (now - last) / 1000)); last = now;
+  if (!Q.has('freeze')) step(dt);
+  renderer.render(scene, camera);
+  placeLabels();
+  document.getElementById('info').textContent = 't=' + engine.time.toFixed(1) + ' calls=' + renderer.info.render.calls + ' tris=' + renderer.info.render.triangles;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+window.__islands = islands; window.__town = town;
+</script>
+</body>
+</html>

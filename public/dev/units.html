@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Units harness · Command &amp; Context</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Lilita+One&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/base.css">
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#8fd6ea}
+canvas{display:block}
+#devhud{position:fixed;left:8px;top:8px;background:rgba(14,22,48,.8);color:#fff;padding:6px 10px;border-radius:8px;font:600 12px "Chakra Petch",sans-serif}
+#err{position:fixed;left:8px;bottom:8px;right:8px;color:#fff;background:#b3261e;font:11px monospace;white-space:pre-wrap;display:none;padding:8px;border-radius:6px;max-height:45vh;overflow:auto}
+</style>
+</head>
+<body>
+<div id="labels"></div><div id="devhud">loading…</div><div id="err"></div>
+<script>
+  (() => {
+    const box = () => document.getElementById('err');
+    const log = (s) => { const el = box(); if (!el) return; el.style.display = 'block'; el.textContent += s + '\n'; };
+    addEventListener('error', (e) => log(e.error?.stack || e.message));
+    addEventListener('unhandledrejection', (e) => log('unhandled: ' + (e.reason?.stack || e.reason)));
+    const w = console.warn.bind(console), er = console.error.bind(console);
+    console.warn = (...a) => { w(...a); log('warn: ' + a.map((x) => x?.stack || String(x)).join(' ')); };
+    console.error = (...a) => { er(...a); log('error: ' + a.map((x) => x?.stack || String(x)).join(' ')); };
+  })();
+</script>
+<script type="module">
+// Units harness: a minimal iso scene with stub engine/world/island/buildings to exercise units.js.
+//   ?scene=all|roster|gallery|lunch|life|cast  &t=<fast-forward secs>  &freeze  &zoom=<visible world height>
+//   &cx=&cz= (camera target)  &rot=0..3  &faction=sonnet (gallery)  &poke=<unit#>[:<times>]  &label=<unit#>
+import * as THREE from 'three';
+import * as K from '/js/world/kit.js';
+import { Unit } from '/js/world/units.js';
+import { Labels } from '/js/world/labels.js';
+import { Fx } from '/js/world/fx.js';
+import { Building } from '/js/world/buildings.js';
+
+const { PAL, factionPal, mat, glow, box, cyl, cone, ico, V3 } = K;
+const Q = new URLSearchParams(location.search);
+const SCENE = Q.get('scene') || 'all';
+const FF = parseFloat(Q.get('t') || '0');
+const FREEZE = Q.has('freeze');
+const ROT = parseInt(Q.get('rot') || '0', 10);
+const TOP = 1.5;
+const R = K.rng('harness:' + SCENE);
+
+// ---- renderer / scene / camera -------------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(1.5, devicePixelRatio));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fdcf0);
+scene.fog = new THREE.Fog(0x9fdcf0, 90, 180);
+const root = new THREE.Group();
+scene.add(root);
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
+const target = new THREE.Vector3(0, TOP, 0);
+let viewH = 24;
+function placeCamera() {
+  const az = Math.PI / 4 + ROT * Math.PI / 2, el = (35 * Math.PI) / 180, d = 80;
+  camera.position.set(target.x + Math.sin(az) * Math.cos(el) * d, target.y + Math.sin(el) * d, target.z + Math.cos(az) * Math.cos(el) * d);
+  camera.lookAt(target);
+  const a = innerWidth / innerHeight, h = viewH / 2;
+  camera.left = -h * a; camera.right = h * a; camera.top = h; camera.bottom = -h;
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld();
+}
+scene.add(new THREE.HemisphereLight(0xd6ecff, 0x8a6a4a, 1.25));
+const sun = new THREE.DirectionalLight(0xfff0d6, 2.1);
+sun.position.set(22, 34, 12);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -26, right: 26, top: 26, bottom: -26, near: 1, far: 120 });
+sun.shadow.bias = -0.0006;
+scene.add(sun, sun.target);
+const sea = new THREE.Mesh(new THREE.PlaneGeometry(600, 600).rotateX(-Math.PI / 2), mat(PAL.sea));
+sea.receiveShadow = true;
+root.add(sea);
+
+// ---- engine stub (real Labels + Fx from the engine modules) ----------------------------------------------------
+const bus = {
+  m: new Map(),
+  on(n, f) { if (!this.m.has(n)) this.m.set(n, new Set()); this.m.get(n).add(f); return () => this.m.get(n)?.delete(f); },
+  off(n, f) { this.m.get(n)?.delete(f); },
+  emit(n, ...a) { for (const f of [...(this.m.get(n) || [])]) f(...a); },
+};
+const engine = {
+  THREE, renderer, scene, camera, root, time: 0, bus, daylight: 1,
+  settings: { labels: Q.get('labels') || 'hover', quality: 'high', reduceMotion: false, director: false, on() {} },
+  pick: { add() {}, remove() {} },
+  view: { focus() {}, fit() {}, rotate() {}, zoomBy() {} },
+  serverNow: () => Date.now(),
+  onFrame() { return () => {}; },
+};
+engine.labels = new Labels(engine, document.getElementById('labels'));
+engine.fx = new Fx(engine);
+if (Q.has('nofx')) { engine.fx.zzz = undefined; engine.fx.trail = undefined; }
+
+// ---- world stub ----------------------------------------------------------------------------------------------
+const world = {
+  engine, islands: new Map(), buildings: new Map(), units: new Map(),
+  unitOf: (id) => world.units.get(id) || null,
+  buildingOf: (k) => world.buildings.get(k) || null,
+  islandOf: (id) => world.islands.get(id) || null,
+};
+const units = [];
+
+function makeIsland(id, cx, cz, r, opts = {}) {
+  const group = new THREE.Group(); group.position.set(cx, 0, cz); root.add(group);
+  const cliff = new THREE.Mesh(K.jitter(new THREE.CylinderGeometry(r, r + 0.9, TOP, 30, 2), 0.25, 3, true), mat(PAL.cliff));
+  cliff.position.y = TOP / 2 - 0.05; cliff.receiveShadow = true; cliff.castShadow = true; group.add(cliff);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.12, r + 0.05, 0.2, 30), mat(PAL.grass)); cap.position.y = TOP - 0.1; cap.receiveShadow = true; group.add(cap);
+  const beach = new THREE.Mesh(new THREE.CylinderGeometry(r + 1.1, r + 1.6, 0.34, 30), mat(PAL.sand)); beach.position.y = 0.0; beach.receiveShadow = true; group.add(beach);
+  const W = (x, z) => new THREE.Vector3(cx + x, TOP, cz + z);
+  const crystals = (opts.crystals || [[-2.5, -9.5], [9.5, -3], [-10.5, -1.5]]).map(([x, z]) => W(x, z));
+  for (const c of crystals) {
+    for (let i = 0; i < 5; i++) {
+      const h = 0.5 + ((i * 37) % 5) * 0.12, a = i * 1.3;
+      const m = K.cone(0.16, h, 5, glow(PAL.crystal, 0.55), { center: false });
+      m.position.set(c.x + Math.sin(a) * 0.22 * (i ? 1 : 0), TOP, c.z + Math.cos(a) * 0.22 * (i ? 1 : 0));
+      m.rotation.set(Math.sin(a) * 0.25, 0, Math.cos(a) * 0.25); root.add(m);
+    }
+  }
+  const archive = W(...(opts.archive || [0.8, 0.2]));
+  const arc = K.group(box(1.4, 1.0, 1.1, 0xe9e2cf), K.at(cone(1.05, 0.55, 4, 0x7a4b2b), 0, 1.0, 0, { ry: Math.PI / 4 }), K.at(box(0.4, 0.6, 0.05, 0x4a3426), 0, 0, 0.56));
+  arc.position.copy(archive); arc.traverse((o) => { o.castShadow = true; }); root.add(arc);
+  const shore = [];
+  for (let i = 0; i < 10; i++) { const a = (i / 10) * Math.PI * 2 + 0.3; shore.push(W(Math.sin(a) * (r - 0.35), Math.cos(a) * (r - 0.35))); }
+  const isl = {
+    id, group, top: TOP, radius: r, center: new THREE.Vector3(cx, TOP, cz),
+    stations: { crystals, archive, shore, gitTree: W(-3, 9), launchPad: W(3, 9) },
+    walkable(p) { return Math.hypot(p.x - cx, p.z - cz) < r - 0.25; },
+    randomPoint(rr = Math.random) { const a = rr() * 6.283, d = Math.sqrt(rr()) * (r - 1.5); return W(Math.sin(a) * d, Math.cos(a) * d); },
+  };
+  world.islands.set(id, isl);
+  return isl;
+}
+
+function makeBuilding(key, faction, x, z, { register = true, ry = Math.PI / 4, table = true } = {}) {
+  const pal = factionPal(faction);
+  const g = new THREE.Group(); g.position.set(x, TOP, z); g.rotation.y = ry; root.add(g);
+  const parts = [
+    box(2.6, 2.1, 2.6, pal.main), K.at(box(2.8, 0.18, 2.8, pal.trim), 0, 2.1, 0),
+    K.at(box(0.75, 1.1, 0.12, pal.dark), 0, 0, 1.3),
+    K.at(box(0.5, 0.4, 0.06, glow(PAL.window, 0.6)), 0.8, 1.1, 1.3), K.at(box(0.5, 0.4, 0.06, glow(PAL.window, 0.6)), -0.8, 1.1, 1.3),
+  ];
+  for (const p of parts) { p.castShadow = true; g.add(p); }
+  const L = (lx, ly, lz) => g.localToWorld(new THREE.Vector3(lx, ly, lz));
+  g.updateMatrixWorld(true);
+  let lunch = null;
+  if (table) {
+    const t = new THREE.Group(); t.position.set(2.45, 0, -0.35); g.add(t);
+    t.add(K.at(box(1.1, 0.06, 0.55, PAL.wood), 0, 0.42, 0), K.at(box(0.08, 0.42, 0.45, PAL.woodDark), 0.4, 0, 0), K.at(box(0.08, 0.42, 0.45, PAL.woodDark), -0.4, 0, 0));
+    t.add(K.at(box(1.1, 0.05, 0.22, PAL.wood), 0, 0.22, 0.48), K.at(box(1.1, 0.05, 0.22, PAL.wood), 0, 0.22, -0.48));
+    t.traverse((o) => { o.castShadow = true; o.receiveShadow = true; });
+    g.updateMatrixWorld(true);
+    lunch = { table: L(2.45, 0, -0.35), seats: [L(2.2, 0.27, 0.13), L(2.7, 0.27, 0.13), L(2.2, 0.27, -0.83), L(2.7, 0.27, -0.83)] };
+  }
+  const WS = { edit: [-2.2, 0.9], bash: [-2.2, -0.9], agent: [0.9, 2.35], mcp: [-0.9, 2.35], web: [0, -2.4], read: [1.1, -2.2], search: [-1.2, -2.2], plan: [2.3, 1.3], skill: [-2.3, 0], other: [0, -2.4] };
+  const b = {
+    key, faction, group: g, door: L(0, 0, 1.6), roof: L(0, 2.28, 0), lunch,
+    workSpot(cat) { const w = WS[cat] || WS.other; return L(w[0], 0, w[1]); },
+    onUnitExit() {}, onUnitEnter() { parts[2].scale.y = 1.25; setTimeout(() => { parts[2].scale.y = 1; }, 160); },
+  };
+  if (register) world.buildings.set(key, b);
+  return b;
+}
+
+const pickTarget = (kind, data) => (kind === 'commander' ? { type: 'session', id: data.key, unit: 'cmd:' + data.key } : { type: 'agent', id: data.id });
+function addUnit(kind, data, building, island, instant = true) {
+  const u = new Unit(world, { kind, data, building, island, instant });
+  root.add(u.group);
+  engine.pick.add(u.group, pickTarget(kind, data));
+  world.units.set(kind === 'commander' ? 'cmd:' + data.key : data.id, u);
+  units.push(u);
+  return u;
+}
+let agentSeq = 0;
+function agent(building, island, over = {}, instant = true) {
+  const id = over.id || `a${++agentSeq}`;
+  const data = { id, type: 'general-purpose', description: 'Some task', faction: building.faction, state: 'working', tool: null, depth: 1, parent: null, ...over };
+  return addUnit('agent', data, building, island, instant);
+}
+function commander(building, island, over = {}, instant = true) {
+  const data = { key: building.key, name: `${building.faction} session`, faction: building.faction, state: 'idle', tool: null, ...over };
+  return addUnit('commander', data, building, island, instant);
+}
+const tool = (cat, detail) => ({ cat, name: { edit: 'Edit', bash: 'Bash', read: 'Read', search: 'Grep', web: 'WebFetch', agent: 'Task', mcp: 'mcp__github', plan: 'TodoWrite', skill: 'Skill', other: 'Tool' }[cat], detail: detail || cat, since: 0 });
+function finish(u, status) {
+  u.update({ ...u.data, state: status });
+  u.finish(status).then(() => { u.dispose(); world.units.delete(u.id); units.splice(units.indexOf(u), 1); });
+}
+
+// ---- timers ----------------------------------------------------------------------------------------------------
+const timers = [];
+function at(t, fn) { timers.push({ t, fn }); }
+function every(p, fn, start = p) { const tick = (t) => { fn(); at(t + p, tick); }; at(start, tick); }
+function runTimers(now) {
+  for (let i = 0; i < timers.length; i++) { const tm = timers[i]; if (tm.t <= now) { timers.splice(i--, 1); try { tm.fn(tm.t); } catch (e) { console.error(e); } } }
+}
+
+// ---- scenes ----------------------------------------------------------------------------------------------------
+const FACTIONS = ['opus', 'sonnet', 'haiku', 'fable', 'merc'];
+const TYPES = ['general-purpose', 'Explore', 'Plan', 'review-yagni', 'wiring-review', 'lint-conventions', 'frontend-design', 'review-skeptical', 'test-runner', 'docs-writer', 'security-guard', 'debug-fixer', 'hydra-wrangler'];
+const CATS = ['bash', 'edit', 'read', 'search', 'web', 'agent', 'mcp', 'plan', 'skill', 'other'];
+
+function sceneAll(opts = {}) {
+  const isl = makeIsland('isl', 0, 0, 14);
+  const spots = { opus: [-5, -3.5], sonnet: [3.8, -5.4], haiku: [6, 3.4], fable: [-1.2, 6.4], merc: [-7.2, 3.2] };
+  const B = {};
+  for (const f of FACTIONS) B[f] = makeBuilding(`b-${f}`, f, ...spots[f]);
+  if (opts.lunch) {
+    for (const f of FACTIONS) commander(B[f], isl, { state: 'idle' });
+    for (const f of FACTIONS) for (let i = 0; i < 2; i++) agent(B[f], isl, { type: TYPES[(i * 5 + f.length) % TYPES.length], faction: FACTIONS[(FACTIONS.indexOf(f) + i) % 5], state: 'waiting' });
+    return;
+  }
+  commander(B.opus, isl, { state: 'working', tool: tool('bash', 'npm test') });
+  commander(B.sonnet, isl, { state: 'idle' });
+  commander(B.haiku, isl, { state: 'needs_input', tool: tool('plan', 'AskUserQuestion') });
+  commander(B.fable, isl, { state: 'asleep' });
+  commander(B.merc, isl, { state: 'working', tool: tool('agent', 'Task') });
+  const eng = agent(B.sonnet, isl, { type: 'general-purpose', faction: 'sonnet', tool: tool('edit', 'IncomeStatement.vue'), description: 'Wire up the income statement' });
+  agent(B.opus, isl, { type: 'Explore', faction: 'opus', tool: tool('search', 'TODO') });
+  agent(B.haiku, isl, { type: 'test-runner', faction: 'haiku', tool: tool('bash', 'vitest run') });
+  agent(B.fable, isl, { type: 'docs-writer', faction: 'fable', tool: tool('read', 'README.md') });
+  agent(B.merc, isl, { type: 'security-guard', faction: 'merc', tool: tool('web', 'owasp.org') });
+  agent(B.sonnet, isl, { type: 'Plan', faction: 'sonnet', tool: tool('plan', 'TodoWrite') });
+  agent(B.opus, isl, { type: 'review-skeptical', faction: 'opus', tool: tool('skill', 'code-review') });
+  agent(B.haiku, isl, { type: 'frontend-design', faction: 'haiku', tool: tool('mcp', 'figma.get_file') });
+  agent(B.fable, isl, { type: 'wiring-review', faction: 'fable', tool: tool('agent', 'Task') });
+  agent(B.merc, isl, { type: 'debug-fixer', faction: 'merc', state: 'thinking' });
+  agent(B.sonnet, isl, { type: 'lint-conventions', faction: 'opus', state: 'waiting' });
+  agent(B.opus, isl, { type: 'review-yagni', faction: 'opus', state: 'stalled' });
+  agent(B.haiku, isl, { type: 'hydra-wrangler', faction: 'sonnet', tool: tool('web', 'npmjs.com') });
+  agent(B.fable, isl, { type: 'Explore', faction: 'haiku', tool: tool('read', 'package.json') });
+  agent(B.sonnet, isl, { id: 'app1', type: 'test-runner', faction: 'haiku', depth: 2, parent: eng.id, tool: tool('read', 'spec.ts') });
+  agent(B.merc, isl, { type: 'general-purpose', faction: 'fable', tool: tool('bash', 'git status') });
+  if (opts.life !== false) lifecycle(B, isl);
+}
+
+function lifecycle(B, isl) {
+  // spawn new workers from random doors, finish them with done / failed / lost, add apprentices, shuffle tools
+  every(5.5, () => {
+    const f = FACTIONS[Math.floor(R() * 5)];
+    const u = agent(B[f], isl, { type: TYPES[Math.floor(R() * TYPES.length)], faction: FACTIONS[Math.floor(R() * 5)], tool: tool(CATS[Math.floor(R() * CATS.length)]) }, false);
+    const life = 7 + R() * 7, roll = R();
+    at(engine.time + life, () => { if (units.includes(u)) finish(u, roll < 0.55 ? 'done' : roll < 0.8 ? 'failed' : 'lost'); });
+  }, 1.5);
+  every(13, () => {
+    const parents = units.filter((u) => u.kind === 'agent' && !u.apprentice && !u.finishing);
+    if (!parents.length) return;
+    const p = parents[Math.floor(R() * parents.length)];
+    const u = agent(p.building, isl, { type: TYPES[Math.floor(R() * TYPES.length)], faction: FACTIONS[Math.floor(R() * 5)], depth: 2, parent: p.id, tool: tool(CATS[Math.floor(R() * CATS.length)]) }, false);
+    at(engine.time + 9 + R() * 5, () => { if (units.includes(u)) finish(u, R() < 0.7 ? 'done' : 'failed'); });
+  }, 4);
+  every(6.5, () => {
+    const ws = units.filter((u) => u.kind === 'agent' && !u.finishing && u.data.state === 'working');
+    if (!ws.length) return;
+    const u = ws[Math.floor(R() * ws.length)];
+    u.update({ ...u.data, tool: tool(CATS[Math.floor(R() * CATS.length)]) });
+  }, 3);
+}
+
+function sceneFinish() {
+  // deterministic lifecycle tableau: spawn at t=0.3, finishes at t=1.0 (done / stamp / failed / lost), apprentice returns to parent
+  const isl = makeIsland('isl', 0, 0, 10, { crystals: [[-6, -3]], archive: [5, -5] });
+  const b = makeBuilding('b-fin', 'sonnet', -1.2, -1.2);
+  const fwd = V3(Math.SQRT1_2, 0, Math.SQRT1_2), right = V3(Math.SQRT1_2, 0, -Math.SQRT1_2);
+  const place = (u, r, f) => { const p = V3(-1.2, TOP, -1.2).addScaledVector(fwd, f).addScaledVector(right, r); u.group.position.copy(p); u.spot.x = p.x; u.spot.z = p.z; u.spot.y = TOP; u.yaw = Math.PI / 4; u.group.rotation.y = u.yaw; };
+  const insp = agent(b, isl, { type: 'review-skeptical', faction: 'opus', state: 'waiting' }); place(insp, -2.2, 3.2);
+  const eng = agent(b, isl, { type: 'general-purpose', faction: 'haiku', state: 'waiting' }); place(eng, -0.8, 3.6);
+  const tst = agent(b, isl, { type: 'test-runner', faction: 'fable', state: 'waiting' }); place(tst, 0.8, 3.6);
+  const grd = agent(b, isl, { type: 'security-guard', faction: 'merc', state: 'waiting' }); place(grd, 2.2, 3.2);
+  const par = agent(b, isl, { type: 'Explore', faction: 'sonnet', state: 'thinking' }); place(par, 3.4, 1.4);
+  const app = agent(b, isl, { type: 'test-runner', faction: 'haiku', depth: 2, parent: par.id, state: 'waiting' }); place(app, 3.4, 2.4);
+  at(0.3, () => agent(b, isl, { type: 'frontend-design', faction: 'fable', state: 'thinking' }, false));
+  at(1.0, () => { finish(insp, 'done'); finish(eng, 'done'); finish(tst, 'failed'); finish(grd, 'lost'); finish(app, 'done'); });
+}
+
+// Commanders casting at real HQs (buildings.js), one per faction: &cats=edit,bash,read,web,agent  &states=working,thinking,waiting
+const blds = [];
+function sceneCast() {
+  const isl = makeIsland('isl', 0, 0, 21, { crystals: [], archive: [0, -60] });
+  const right = V3(Math.SQRT1_2, 0, -Math.SQRT1_2);
+  const cats = (Q.get('cats') || 'edit,bash,read,web,agent').split(',');
+  const states = (Q.get('states') || 'working').split(',');
+  FACTIONS.forEach((f, i) => {
+    const p = right.clone().multiplyScalar((i - 2) * 6.6);
+    const cat = cats[i % cats.length], state = states[i % states.length];
+    const session = { key: 'cast-' + f, faction: f, name: f + ' session', state, tool: tool(cat), tools: { edit: 40, bash: 120, read: 60, web: 30, agent: 12, mcp: 6 }, context: { max: 200000, used: 70000 + i * 20000 }, agents: [], procs: [], agentsDone: 3 };
+    const b = new Building(world, session, { position: V3(p.x, TOP, p.z), facing: Math.PI / 4, size: 5 }, isl, { instant: true });
+    root.add(b.group);
+    world.buildings.set(b.key, b);
+    blds.push(b);
+    commander(b, isl, { key: b.key, state, tool: tool(cat) });
+  });
+}
+
+function sceneRoster() {
+  makeIsland('isl', 0, 0, 16, { crystals: [], archive: [0, -30] });
+  const roles = ['general-purpose', 'Explore', 'Plan', 'review-yagni', 'wiring-review', 'lint-conventions', 'frontend-design', 'review-skeptical', 'test-runner', 'docs-writer', 'security-guard', 'debug-fixer', 'custom-hydra'];
+  const right = V3(Math.SQRT1_2, 0, -Math.SQRT1_2), fwd = V3(Math.SQRT1_2, 0, Math.SQRT1_2);
+  const facing = Math.PI / 4;
+  FACTIONS.forEach((f, row) => {
+    const cols = [...roles.map((t) => ({ t })), { cmd: true }];
+    cols.forEach((c, col) => {
+      const pos = right.clone().multiplyScalar((col - cols.length / 2) * 1.1).addScaledVector(fwd, (row - 2) * -1.7);
+      const u = c.cmd
+        ? addUnit('commander', { key: `r-${f}`, name: 'Roster', faction: f, state: 'roster' }, null, null, true)
+        : addUnit('agent', { id: `r-${f}-${col}`, type: c.t, faction: f, state: 'idle', depth: 1 }, null, null, true);
+      u.group.position.set(pos.x, TOP, pos.z); u.spot.x = pos.x; u.spot.z = pos.z; u.spot.y = TOP; u.groundY = TOP;
+      u.yaw = facing; u.group.rotation.y = facing;
+    });
+  });
+}
+
+function sceneGallery() {
+  const f = Q.get('faction') || 'sonnet';
+  // a long strip of plateau with water in front
+  const strip = new THREE.Mesh(new THREE.BoxGeometry(70, TOP, 8), mat(PAL.grass));
+  strip.position.set(0, TOP / 2, -2.2); strip.rotation.y = Math.PI / 4; strip.receiveShadow = true; root.add(strip);
+  const right = V3(Math.SQRT1_2, 0, -Math.SQRT1_2), fwd = V3(Math.SQRT1_2, 0, Math.SQRT1_2);
+  strip.position.addScaledVector(fwd, -0.4);
+  const acts = Q.get('acts') ? Q.get('acts').split(',') : ['bash', 'edit', 'read', 'search', 'web', 'agent', 'mcp', 'plan', 'skill', 'other', 'think', 'wait', 'stall', 'c:agent', 'c:lunch', 'c:sleep', 'c:alert'];
+  acts.forEach((a, i) => {
+    const pos = right.clone().multiplyScalar((i - (acts.length - 1) / 2) * 2.3).add(V3(0, TOP, 0));
+    const d = V3(Math.cos(0.55), 0, Math.sin(0.55)); // facing: 3/4 view, toward screen-right
+    d.set(right.x * 0.8 + fwd.x * 0.6, 0, right.z * 0.8 + fwd.z * 0.6).normalize();
+    if (a === 'web') d.copy(fwd);
+    const P = pos.clone();
+    const isl = {
+      id: 'g' + i, top: TOP, radius: 60, center: P.clone().addScaledVector(d, -6),
+      stations: { crystals: [P.clone().addScaledVector(d, 0.78)], archive: P.clone().addScaledVector(d, 1.45), shore: [P.clone()] },
+      walkable: () => true,
+    };
+    if (a === 'bash') for (let k = 0; k < 4; k++) { const m = K.cone(0.14, 0.45 + k * 0.1, 5, glow(PAL.crystal, 0.55)); m.position.copy(isl.stations.crystals[0]).add(V3(Math.sin(k * 1.7) * 0.15 * (k ? 1 : 0), 0, Math.cos(k * 1.7) * 0.15 * (k ? 1 : 0))); root.add(m); }
+    if (a === 'read') { const arc = box(0.9, 0.9, 0.9, 0xe9e2cf); arc.position.copy(isl.stations.archive); root.add(arc); }
+    const cmd = a.startsWith('c:');
+    const bpos = P.clone().addScaledVector(d, 3);
+    const g = new THREE.Group(); g.position.copy(bpos); root.add(g);
+    if (cmd) { const hut = box(1.6, 1.6, 1.6, factionPal(f).main); g.add(hut); }
+    const tableAt = P.clone().addScaledVector(d, -1.2);
+    const b = {
+      key: 'gb' + i, faction: f, group: g, door: P.clone().addScaledVector(d, 4.5), roof: bpos.clone().add(V3(0, 1.7, 0)),
+      lunch: { table: tableAt, seats: [] }, workSpot: () => P.clone(),
+    };
+    if (a === 'c:alert') { b.door = bpos.clone().addScaledVector(d, -0.9); }
+    const act = cmd ? a.slice(2) : a;
+    if (cmd) {
+      const st = { agent: { state: 'working', tool: tool('agent') }, lunch: { state: 'idle' }, sleep: { state: 'asleep' }, alert: { state: 'needs_input' } }[act];
+      const u = addUnit('commander', { key: b.key, name: 'Gallery', faction: f, ...st }, b, isl, true);
+      if (act === 'alert' && Q.has('ground')) { u.onRoof = false; }
+    } else {
+      const data = { id: 'g' + i, type: Q.get('type') || 'general-purpose', faction: f, depth: 1 };
+      if (act === 'think') Object.assign(data, { state: 'thinking' });
+      else if (act === 'wait') Object.assign(data, { state: 'waiting' });
+      else if (act === 'stall') Object.assign(data, { state: 'stalled' });
+      else Object.assign(data, { state: 'working', tool: tool(act) });
+      addUnit('agent', data, b, isl, true);
+    }
+  });
+}
+
+if (SCENE === 'roster') { sceneRoster(); viewH = 11; target.set(0, TOP + 0.4, 0); }
+else if (SCENE === 'finish') { sceneFinish(); viewH = 7.5; target.set(0.6, TOP + 0.6, 0.6); }
+else if (SCENE === 'gallery') { sceneGallery(); viewH = 9; target.set(0, TOP + 0.5, 0); }
+else if (SCENE === 'lunch') { sceneAll({ lunch: true }); viewH = 22; }
+else if (SCENE === 'life') { sceneAll({ life: true }); viewH = 24; }
+else if (SCENE === 'cast') { sceneCast(); viewH = 15; target.set(0, TOP + 0.8, 0); }
+else sceneAll({ life: !Q.has('nolife') });
+if (Q.has('zoom')) viewH = parseFloat(Q.get('zoom'));
+if (Q.has('cx')) target.x = parseFloat(Q.get('cx'));
+if (Q.has('cz')) target.z = parseFloat(Q.get('cz'));
+if (Q.has('cy')) target.y = parseFloat(Q.get('cy'));
+placeCamera();
+engine.labels.setZoom(60 / viewH);
+
+// ---- loop ------------------------------------------------------------------------------------------------------
+function step(dt) {
+  engine.time += dt;
+  K.tickTweens(dt);
+  runTimers(engine.time);
+  for (const b of blds) b.tick(dt, engine.time);
+  for (const u of [...units]) u.tick(dt, engine.time);
+  engine.fx.tick(dt);
+}
+// fast-forward the simulation deterministically before the first frame
+for (let t = 0; t < FF; t += 1 / 30) step(1 / 30);
+// &orb: keep stepping until the focused unit has a spell bolt mid-flight (casting screenshots)
+if (Q.has('orb') && Q.has('focus')) { const u = units[Number(Q.get('focus'))]; const mid = () => { const C = u?.caster; return !!C && (C.orbs.some((o) => o.on && o.t / o.dur > 0.35 && o.t / o.dur < 0.7) || (C.bolt?.on && C.bolt.t > 0.05)); }; for (let k = 0; k < 300 && u && !mid(); k++) step(1 / 30); }
+if (Q.has('focus')) { const u = units[Number(Q.get('focus'))]; if (u) { target.copy(u.group.position); target.y += 0.45; placeCamera(); engine.labels.setZoom(60 / viewH); } }
+const poke = Q.get('poke');
+if (poke) {
+  const [i, n = 1] = poke.split(':').map(Number);
+  const u = units[i];
+  if (u) for (let k = 0; k < n; k++) { const tg = pickTarget(u.kind, u.data); engine.labels.setHot(null, { object: u.group, target: tg }); bus.emit('select', tg, { object: u.group }); }
+}
+if (Q.has('label')) { const u = units[Number(Q.get('label'))]; if (u) { const tg = pickTarget(u.kind, u.data); engine.labels.setHot({ object: u.group, target: tg }, null); bus.emit('hover', tg, { object: u.group }); } }
+
+const hud = document.getElementById("devhud");
+let last = performance.now(), frames = 0, fpsT = 0, fps = 0;
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (!FREEZE) step(dt);
+  renderer.render(scene, camera);
+  engine.labels.update();
+  frames++; fpsT += dt;
+  if (fpsT > 0.5) { fps = Math.round(frames / fpsT); frames = 0; fpsT = 0; }
+  hud.textContent = `units harness · ${SCENE} · ${units.length} units · t=${engine.time.toFixed(1)}s · ${fps} fps · ${renderer.info.render.calls} calls`;
+  if (Q.has('debug')) { const u = units[Number(Q.get('debug'))]; if (u) { const P = u.P, R = u.R; hud.textContent += ` | #${Q.get('debug')} act=${u.act} phase=${u.phase} seq=${!!u.seq} roof=${u.onRoof} aLz=${P.aLz.toFixed(2)} aRz=${P.aRz.toFixed(2)} armL.z=${R.armL.rotation.z.toFixed(2)} armR.z=${R.armR.rotation.z.toFixed(2)} spot=${u.spot.x.toFixed(1)},${u.spot.y.toFixed(1)},${u.spot.z.toFixed(1)} pos=${u.group.position.x.toFixed(1)},${u.group.position.y.toFixed(1)},${u.group.position.z.toFixed(1)}`; } }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); placeCamera(); engine.labels.resize(innerWidth, innerHeight); });
+// click to poke (manual testing)
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+addEventListener('pointerdown', (e) => {
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hits = ray.intersectObjects(units.map((u) => u.group), true);
+  if (!hits.length) { bus.emit('select', null); return; }
+  let o = hits[0].object; while (o && !o.userData.unit) o = o.parent;
+  const u = o?.userData.unit;
+  if (u) bus.emit('select', pickTarget(u.kind, u.data), { object: u.group });
+});
+window.__units = { units, world, engine, Unit };
+</script>
+</body>
+</html>

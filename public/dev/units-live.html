@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Units live · Command &amp; Context</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Lilita+One&display=swap">
+<link rel="stylesheet" href="/css/base.css">
+<script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/"}}</script>
+<style>
+#devhud{position:fixed;left:8px;top:8px;z-index:30;background:rgba(14,22,48,.85);color:#fff;padding:6px 10px;border-radius:8px;font:600 12px "Chakra Petch",sans-serif;max-width:70vw}
+#err{position:fixed;left:8px;bottom:8px;right:8px;z-index:40;color:#fff;background:#b3261e;font:11px monospace;white-space:pre-wrap;display:none;padding:8px;border-radius:6px;max-height:40vh;overflow:auto}
+</style>
+</head>
+<body>
+<div id="stage"></div><div id="labels"></div><div id="devhud">booting…</div><div id="err"></div>
+<script>
+  (() => {
+    const log = (s) => { const el = document.getElementById('err'); if (!el) return; el.style.display = 'block'; el.textContent += s + '\n'; };
+    addEventListener('error', (e) => log(e.error?.stack || e.message));
+    addEventListener('unhandledrejection', (e) => log('unhandled: ' + (e.reason?.stack || e.reason)));
+    const w = console.warn.bind(console), er = console.error.bind(console);
+    console.warn = (...a) => { w(...a); log('warn: ' + a.map((x) => x?.stack || String(x)).join(' ')); };
+    console.error = (...a) => { er(...a); log('error: ' + a.map((x) => x?.stack || String(x)).join(' ')); };
+  })();
+</script>
+<script type="module">
+// Real engine + world + demo feed, no HUD; the camera follows one unit for close-up screenshots.
+//   ?scene=units (demo pinned scene; omit for the live demo loop)  &speed=1
+//   &mag=<n> magnify beyond the engine zoom limit (debug)
+//   &type=<agent type substring> | &unit=<index> | &cmd (the first commander)   &zoom=8  &after=3 (secs)  &poke=<n>
+import * as THREE from 'three';
+import { createEngine } from '/js/world/engine.js';
+import { World } from '/js/world/world.js';
+import { startDemo } from '/js/demo.js';
+
+const Q = new URLSearchParams(location.search);
+const engine = createEngine({ container: document.getElementById('stage'), labelRoot: document.getElementById('labels') });
+const world = new World(engine);
+window.cnc = { engine, world };
+startDemo({ onSnapshot: (s) => world.apply(s), scene: Q.has('scene') ? Q.get('scene') : 'units', speed: +(Q.get('speed') || 1) });
+
+const hud = document.getElementById('devhud');
+function pickUnit() {
+  const all = [...world.units.values()];
+  if (Q.has('cmd')) return all.find((u) => u.kind === 'commander' && (!Q.get('cmd') || u.data?.state === Q.get('cmd'))) || null;
+  if (Q.has('type')) return all.find((u) => String(u.data?.type || '').toLowerCase().includes(Q.get('type').toLowerCase())) || null;
+  if (Q.has('unit')) return all[+Q.get('unit')] || null;
+  return null;
+}
+let target = null;
+if (Q.has('rot')) setTimeout(() => engine.view.rotate(+Q.get('rot'), { secs: 0 }), 500);
+setTimeout(() => {
+  target = pickUnit();
+  if (target?.group) {
+    engine.view.focus(target.group.getWorldPosition(new THREE.Vector3()), { zoom: +(Q.get('zoom') || 8), secs: 0 });
+    for (let i = 0; i < +(Q.get('poke') || 0); i++) {
+      const tg = target.kind === 'commander' ? { type: 'session', id: target.key, unit: target.cmdId } : { type: 'agent', id: target.id };
+      engine.bus.emit('select', tg, { object: target.group });
+    }
+  }
+}, (+(Q.get('after') || 3)) * 1000);
+engine.onFrame(() => {
+  const n = world.units.size;
+  const u = target;
+  hud.textContent = `units live · ${n} units` + (u ? ` · ${u.kind} ${u.data?.type || u.data?.name || ''} · ${u.faction}/${u.role} · act=${u.act} phase=${u.phase}` : '');
+  if (u?.fishing) { const b = u.xprops.get('bobber'); const F = u.fishing; hud.textContent += ` · fish=${F.ph} bob=${b ? [b.position.x.toFixed(1), b.position.y.toFixed(2), b.position.z.toFixed(1), b.scale.x.toFixed(2), b.visible].join(',') : 'none'} extrasParent=${u.extras.parent?.name || u.extras.parent?.type} line=${u.line?.visible} cast=${u.castDist().toFixed(2)} pos=${u.group.position.x.toFixed(1)},${u.group.position.y.toFixed(2)},${u.group.position.z.toFixed(1)}`; }
+  if (u?.group && Q.has('follow')) engine.view.focus(u.group.getWorldPosition(new THREE.Vector3()), { zoom: +(Q.get('zoom') || 8), secs: 0 });
+  if (Q.has('mag')) { engine.camera.zoom = +Q.get('mag'); engine.camera.updateProjectionMatrix(); }
+});
+</script>
+</body>
+</html>
